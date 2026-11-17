@@ -10,8 +10,8 @@ import mediapipe as mp
 import numpy as np
 
 from alarm import LIP_OUTLINE, OPEN_THRESHOLD, Monitor, head_turned, mouth_open_alarm, mouth_ratio
-from speech import SPEECH_MODEL, SpeechState, microphone
-from obs_camera import OBS_CAMERA_NAME, ObsCamera
+from camera_capture import LatestCamera
+from speech import SpeechState, microphone
 
 
 WINDOW = "Censorship System"
@@ -152,7 +152,7 @@ def tracking_frame(frame, limit=960):
                       interpolation=cv2.INTER_AREA)
 
 
-def render_console(frame, reasons, status, mic_status, reading, source=None, window_size=None):
+def render_console(frame, reasons, status, mic_status, reading, window_size=None):
     screen = np.full((690, 1190, 3), PANEL, dtype=np.uint8)
     height, width = frame.shape[:2]
     cv2.rectangle(screen, (15, 71), (896, 672), RED if reasons else (80, 83, 91), 1)
@@ -172,8 +172,6 @@ def render_console(frame, reasons, status, mic_status, reading, source=None, win
     draw_label(screen, f"MAR {reading}  /  {OPEN_THRESHOLD:.2f}", 448, size=0.54, x=928)
     draw_label(screen, mic_status, 482, size=0.54, x=928)
     draw_label(screen, f"Camera {width} x {height}", 516, size=0.54, x=928)
-    if source is not None:
-        draw_label(screen, f"Source: {source}", 550, size=0.48, x=928)
     window_width, window_height = window_size or (1190, 690)
     if window_width < 16 or window_height < 16:
         window_width, window_height = 1190, 690
@@ -232,12 +230,11 @@ def first_camera_frame(camera, requested):
     raise RuntimeError("The webcam did not send frames at the requested or default resolution.")
 
 
-def run_camera(camera_index, use_obs, resolution, face, hands, speech,
-               audio_stream, cable, tone):
-    camera = ObsCamera(resolution) if use_obs else cv2.VideoCapture(camera_index)
-    if not use_obs and not camera.isOpened():
+def run_camera(resolution, face, hands, speech, audio_stream, cable, tone):
+    camera = cv2.VideoCapture(0)
+    if not camera.isOpened():
         camera.release()
-        raise RuntimeError("Could not open webcam. Check Windows camera access or try --camera 1.")
+        raise RuntimeError("Could not open the default camera. Check Windows camera access.")
 
     monitor = Monitor()
     profile_detector = cv2.CascadeClassifier(
@@ -252,11 +249,9 @@ def run_camera(camera_index, use_obs, resolution, face, hands, speech,
     timestamp = -1
     started = monotonic()
     try:
-        if use_obs:
-            ok, image = camera.read()
-        else:
-            image = first_camera_frame(camera, resolution)
-            ok = True
+        image = first_camera_frame(camera, resolution)
+        camera = LatestCamera(camera)
+        ok = True
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(WINDOW, 1190, 690)
         window_size = (1190, 690)
@@ -266,7 +261,7 @@ def run_camera(camera_index, use_obs, resolution, face, hands, speech,
             if cable is not None and not cable.active:
                 raise RuntimeError("The virtual cable stopped. Restart the app.")
             if speech.error is not None:
-                raise RuntimeError(f"Speech recognition stopped: {speech.error}")
+                raise RuntimeError(f"Voice detection stopped: {speech.error}")
             if not ok:
                 raise RuntimeError("The webcam stopped sending frames.")
             frame = cv2.flip(image, 1)
@@ -326,7 +321,7 @@ def run_camera(camera_index, use_obs, resolution, face, hands, speech,
             speech.camera_alarm = bool(reasons)
             speech.camera_checked_at = monotonic()
             if speaking:
-                reasons.append("MIC: WORD DETECTED")
+                reasons.append("MIC: VOICE DETECTED")
             if cable is None and bool(reasons) != speech.alarm_playing:
                 speech.muted_until = now + 0.10
                 speech.alarm_playing = bool(reasons)
@@ -345,11 +340,11 @@ def run_camera(camera_index, use_obs, resolution, face, hands, speech,
             if "HEAD TURNED AWAY" in reasons:
                 status = "Head turned away"
             reading = "--" if ratio is None else f"{ratio:.2f}"
-            mic_status = "Mic disabled" if audio_stream is None else "Mic: English recognition"
+            mic_status = "Mic disabled" if audio_stream is None else "Mic: Voice detection"
             if cable is not None:
                 mic_status = "Virtual mic -> CABLE Output"
             cv2.imshow(WINDOW, render_console(frame, reasons, status, mic_status, reading,
-                                               OBS_CAMERA_NAME if use_obs else None, window_size))
+                                               window_size))
             cv2.waitKey(1)
             if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
                 break
@@ -368,9 +363,6 @@ def main():
     from contextlib import ExitStack
 
     parser = argparse.ArgumentParser(description="Webcam mouth alarm for Windows")
-    source = parser.add_mutually_exclusive_group()
-    source.add_argument("--camera", type=int, default=0)
-    source.add_argument("--obs", action="store_true", help="Select OBS Virtual Camera by name")
     parser.add_argument("--resolution", type=camera_resolution,
                         help="Request WIDTHxHEIGHT; defaults to trying up to 3840x2160")
     parser.add_argument("--mic", type=int, help="Use this microphone device index")
@@ -399,15 +391,14 @@ def main():
                 if not args.no_mic:
                     try:
                         stream, cable = stack.enter_context(microphone(
-                            args.mic, speech, args.models / SPEECH_MODEL,
+                            args.mic, speech,
                             virtual_mic=args.virtual_mic, cable_device=args.cable_device))
                     except (RuntimeError, OSError, ValueError, ImportError) as error:
                         raise RuntimeError(f"{error}. Check Windows microphone access or use --no-mic.") from error
                 temp_dir = stack.enter_context(TemporaryDirectory(prefix="mouth-alarm-"))
                 tone = Path(temp_dir) / "alarm.wav"
                 write_tv_tone(tone)
-                run_camera(args.camera, args.obs, args.resolution, face, hands,
-                           speech, stream, cable, tone)
+                run_camera(args.resolution, face, hands, speech, stream, cable, tone)
     except (RuntimeError, OSError, ValueError, ImportError) as error:
         parser.exit(1, f"Mouth Alarm: {error}\n")
 

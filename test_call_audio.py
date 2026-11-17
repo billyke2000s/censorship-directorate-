@@ -25,12 +25,13 @@ class CallAudioTests(unittest.TestCase):
         samples = np.frombuffer(self.route.output(2.01, self.route.frames), dtype="<i2")
         self.assertTrue(np.all(samples == 100))
 
-    def test_camera_alarm_or_recognized_word_replaces_buffered_audio(self):
+    def test_camera_alarm_or_voice_replaces_buffered_audio(self):
         self.state.camera_alarm = True
         self.route.capture(1.0, self.pcm)
         self.state.camera_alarm = False
         self.route.capture(1.1, self.pcm)
-        self.state.update(1.5, "hello")
+        self.state.update(1.18, True)
+        self.state.update(1.20, True)
         tone = np.repeat(np.frombuffer(self.route.tone, dtype="<i2"), 2).tobytes()
         self.assertEqual(self.route.output(2.0, self.route.frames), tone)
         self.assertEqual(self.route.output(2.1, self.route.frames), tone)

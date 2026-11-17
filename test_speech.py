@@ -15,25 +15,23 @@ class SpeechStateTests(unittest.TestCase):
         filtered = np.frombuffer(remove_alarm_tone(mixed.tobytes(), rate), dtype="<i2")
         np.testing.assert_allclose(filtered, voice, atol=2)
 
-    def test_no_recognized_words_does_not_trigger_alarm(self):
+    def test_isolated_noise_frame_does_not_trigger_alarm(self):
         state = SpeechState()
-        state.update(1.0, "")
-        state.update(1.02, "[noise]")
+        state.update(1.0, True)
+        state.update(1.02, False)
         self.assertFalse(state.active(1.02))
 
-    def test_new_words_trigger_and_repeated_result_does_not_extend_alarm(self):
+    def test_brief_voice_activity_triggers_then_expires(self):
         state = SpeechState()
-        state.update(1, "hello")
-        self.assertTrue(state.active(1))
-        state.update(1.4, "hello")
-        state.update(1.5, "hello", final=True)
-        self.assertFalse(state.active(1.7))
-        state.update(1.8, "don't", final=True)
-        self.assertTrue(state.active(1.8))
+        state.update(1, True)
+        state.update(1.02, True)
+        self.assertTrue(state.active(1.02))
+        state.update(1.04, False)
+        self.assertFalse(state.active(1.33))
 
-    def test_additional_recognized_word_extends_alarm(self):
+    def test_continuous_voice_extends_alarm(self):
         state = SpeechState()
-        state.update(1, "hello")
-        state.update(1.5, "hello there")
-        self.assertTrue(state.active(1.8))
-        self.assertFalse(state.active(2.2))
+        for index in range(20):
+            state.update(1 + index * 0.02, True)
+        self.assertTrue(state.active(1.6))
+        self.assertFalse(state.active(1.7))
