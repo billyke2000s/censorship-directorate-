@@ -1,9 +1,27 @@
 import unittest
 
-from alarm import Monitor, mouth_ratio
+from alarm import Monitor, head_turned, mouth_ratio
 
 
 class MonitorTests(unittest.TestCase):
+    def test_visibility_warnings_wait_and_clear(self):
+        monitor = Monitor()
+        self.assertEqual(monitor.camera_warnings(0, 0, False), [])
+        self.assertEqual(monitor.camera_warnings(1, 0, False), ["FACE NOT VISIBLE"])
+        self.assertEqual(monitor.camera_warnings(2, 2, False), [])
+        self.assertEqual(monitor.camera_warnings(3, 2, False), ["MULTIPLE FACES"])
+        self.assertEqual(monitor.camera_warnings(4, 1, True), [])
+        self.assertEqual(monitor.camera_warnings(6, 1, True), ["HEAD TURNED AWAY"])
+        self.assertEqual(monitor.camera_warnings(7, 1, False), [])
+
+    def test_head_turn_uses_nose_position_along_eye_line(self):
+        points = [(0, 0)] * 468
+        points[33], points[263] = (10, 10), (50, 10)
+        points[1] = (30, 25)
+        self.assertFalse(head_turned(points))
+        points[1] = (48, 25)
+        self.assertTrue(head_turned(points))
+
     def test_opening_ratio(self):
         points = [(0, 0)] * 468
         points[308] = (40, 0)
