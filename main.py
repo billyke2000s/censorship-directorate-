@@ -143,10 +143,18 @@ def fill_camera_preview(frame, panel_width, panel_height):
     return cv2.resize(crop, (panel_width, panel_height), interpolation=interpolation)
 
 
-def render_console(frame, reasons, status, mic_status, reading, source=None):
+def tracking_frame(frame, limit=960):
+    height, width = frame.shape[:2]
+    if max(height, width) <= limit:
+        return frame
+    scale = limit / max(height, width)
+    return cv2.resize(frame, (round(width * scale), round(height * scale)),
+                      interpolation=cv2.INTER_AREA)
+
+
+def render_console(frame, reasons, status, mic_status, reading, source=None, window_size=None):
     screen = np.full((690, 1190, 3), PANEL, dtype=np.uint8)
     height, width = frame.shape[:2]
-    screen[72:672, 16:896] = fill_camera_preview(frame, 880, 600)
     cv2.rectangle(screen, (15, 71), (896, 672), RED if reasons else (80, 83, 91), 1)
     cv2.rectangle(screen, (0, 0), (1189, 54), (26, 27, 156), -1)
     cv2.rectangle(screen, (912, 72), (1174, 672), (27, 27, 34), -1)
@@ -166,7 +174,20 @@ def render_console(frame, reasons, status, mic_status, reading, source=None):
     draw_label(screen, f"Camera {width} x {height}", 516, size=0.54, x=928)
     if source is not None:
         draw_label(screen, f"Source: {source}", 550, size=0.48, x=928)
-    return screen
+    window_width, window_height = window_size or (1190, 690)
+    if window_width < 16 or window_height < 16:
+        window_width, window_height = 1190, 690
+    scale = min(window_width / 1190, window_height / 690)
+    scaled_width, scaled_height = round(1190 * scale), round(690 * scale)
+    interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+    scaled = cv2.resize(screen, (scaled_width, scaled_height), interpolation=interpolation)
+    left, right = round(16 * scale), round(896 * scale)
+    top, bottom = round(72 * scale), round(672 * scale)
+    scaled[top:bottom, left:right] = fill_camera_preview(frame, right - left, bottom - top)
+    canvas = np.full((window_height, window_width, 3), PANEL, dtype=np.uint8)
+    x, y = (window_width - scaled_width) // 2, (window_height - scaled_height) // 2
+    canvas[y:y + scaled_height, x:x + scaled_width] = scaled
+    return canvas
 
 
 def camera_resolution(value):
@@ -237,6 +258,8 @@ def run_camera(camera_index, use_obs, resolution, face, hands, speech,
             image = first_camera_frame(camera, resolution)
             ok = True
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(WINDOW, 1190, 690)
+        window_size = (1190, 690)
         while True:
             if audio_stream is not None and not audio_stream.active:
                 raise RuntimeError("The microphone stopped. Reconnect it and restart.")
@@ -251,7 +274,7 @@ def run_camera(camera_index, use_obs, resolution, face, hands, speech,
             now = monotonic()
             timestamp = max(timestamp + 1, int((now - started) * 1000))
             sample = mp.Image(image_format=mp.ImageFormat.SRGB,
-                              data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                              data=cv2.cvtColor(tracking_frame(frame), cv2.COLOR_BGR2RGB))
             face_result = face.detect_for_video(sample, timestamp)
             faces = face_result.face_landmarks
             detected_hands = hands.detect_for_video(sample, timestamp).hand_landmarks
@@ -326,10 +349,12 @@ def run_camera(camera_index, use_obs, resolution, face, hands, speech,
             if cable is not None:
                 mic_status = "Virtual mic -> CABLE Output"
             cv2.imshow(WINDOW, render_console(frame, reasons, status, mic_status, reading,
-                                               OBS_CAMERA_NAME if use_obs else None))
+                                               OBS_CAMERA_NAME if use_obs else None, window_size))
             cv2.waitKey(1)
             if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
                 break
+            _, _, window_width, window_height = cv2.getWindowImageRect(WINDOW)
+            window_size = (window_width, window_height)
             ok, image = camera.read()
     finally:
         speech.camera_checked_at = 0.0

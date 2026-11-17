@@ -47,7 +47,7 @@ The station sounds a continuous **1 kHz television test tone** while an alarm is
 
 ## ORDER 03 · CONFIGURE THE STATION
 
-The console tries camera modes up to 4K and displays the resolution it receives. Tracking uses the full frame. The preview trims black side bars and center-crops to fill the panel without stretching.
+The console tries camera modes up to 4K and displays the resolution it receives. Face and hand tracking use a smaller copy capped at 960 pixels on the longest edge. The preview draws directly from the full-resolution feed and preserves its proportions when the window is resized. OBS capture keeps only the newest frame if tracking runs behind.
 
 | Launcher option | Purpose |
 | --- | --- |

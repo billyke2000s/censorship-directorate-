@@ -3,6 +3,7 @@
 from shutil import which
 from subprocess import CREATE_NO_WINDOW, PIPE, Popen, TimeoutExpired
 from tempfile import TemporaryFile
+from threading import Condition, Thread
 
 import cv2
 import numpy as np
@@ -17,7 +18,7 @@ class ObsCamera:
         if ffmpeg is None:
             raise RuntimeError("FFmpeg is required for OBS capture. Install FFmpeg and reopen this launcher.")
         command = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error",
-                   "-f", "dshow", "-rtbufsize", "64M"]
+                   "-f", "dshow", "-rtbufsize", "32M"]
         if resolution is not None:
             width, height = resolution
             command += ["-video_size", f"{width}x{height}"]
@@ -30,19 +31,42 @@ class ObsCamera:
         except OSError:
             self.errors.close()
             raise
+        self.ready = Condition()
+        self.packet = None
+        self.finished = False
+        self.reader = Thread(target=self._read_latest, daemon=True)
+        self.reader.start()
+
+    def _read_latest(self):
+        pipe = self.process.stdout
+        try:
+            while True:
+                header = pipe.read(14)
+                if len(header) != 14 or header[:2] != b"BM":
+                    break
+                size = int.from_bytes(header[2:6], "little")
+                if not 54 <= size <= 128 * 1024 * 1024:
+                    break
+                payload = pipe.read(size - len(header))
+                if len(payload) != size - len(header):
+                    break
+                with self.ready:
+                    self.packet = header + payload
+                    self.ready.notify()
+        finally:
+            with self.ready:
+                self.finished = True
+                self.ready.notify_all()
 
     def read(self):
-        pipe = self.process.stdout
-        header = pipe.read(14)
-        if len(header) == 14 and header[:2] == b"BM":
-            size = int.from_bytes(header[2:6], "little")
-            if 54 <= size <= 128 * 1024 * 1024:
-                payload = pipe.read(size - len(header))
-                if len(payload) == size - len(header):
-                    frame = cv2.imdecode(np.frombuffer(header + payload, dtype=np.uint8),
-                                         cv2.IMREAD_COLOR)
-                    if frame is not None:
-                        return True, frame
+        with self.ready:
+            self.ready.wait_for(lambda: self.packet is not None or self.finished, timeout=5)
+            packet = self.packet
+            self.packet = None
+        if packet is not None:
+            frame = cv2.imdecode(np.frombuffer(packet, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if frame is not None:
+                return True, frame
         self.errors.seek(0)
         detail = self.errors.read(4096).decode(errors="replace").strip()
         message = "No frames from OBS Virtual Camera. Start it in OBS and leave OBS open."
@@ -58,5 +82,6 @@ class ObsCamera:
             except TimeoutExpired:
                 self.process.kill()
                 self.process.wait()
+        self.reader.join()
         self.process.stdout.close()
         self.errors.close()
