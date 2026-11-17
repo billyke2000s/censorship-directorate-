@@ -9,7 +9,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 
-from alarm import INNER_LIPS, LIP_OUTLINE, OPEN_THRESHOLD, Monitor, head_turned, mouth_ratio
+from alarm import LIP_OUTLINE, OPEN_THRESHOLD, Monitor, head_turned, mouth_ratio
 from speech import SpeechState, microphone
 
 
@@ -45,17 +45,29 @@ def hand_overlaps_mouth(hands, lips, width, height):
     # Use the palm and each finger separately to avoid filling gaps between fingers.
     groups = ((0, 1, 2, 5, 9, 13, 17), (1, 2, 3, 4), (5, 6, 7, 8),
               (9, 10, 11, 12), (13, 14, 15, 16), (17, 18, 19, 20))
-    margin = max(3, (right - left) * 0.07)
+    margin = max(4, (right - left) * 0.13)
     for hand in hands:
         points = pixel_points(hand, width, height)
         hulls = [
             cv2.convexHull(np.float32([points[index] for index in group]))
             for group in groups
         ]
-        if sum(any(cv2.pointPolygonTest(hull, probe, True) >= -margin
-                   for hull in hulls) for probe in probes) >= 2:
+        distances = [max(cv2.pointPolygonTest(hull, probe, True) for hull in hulls)
+                     for probe in probes]
+        if sum(distance >= -margin for distance in distances) >= 2 or distances[1] >= 0:
             return True
     return False
+
+
+def face_sample(gray_frame, points):
+    outline = np.array([points[index] for index in (10, 152, 234, 454)])
+    height, width = gray_frame.shape
+    left, top = np.maximum(outline.min(axis=0), (0, 0)).astype(int)
+    right, bottom = np.minimum(outline.max(axis=0), (width, height)).astype(int)
+    if right - left < 16 or bottom - top < 16:
+        return None
+    crop = gray_frame[top:bottom, left:right]
+    return cv2.resize(crop, (48, 48), interpolation=cv2.INTER_AREA)
 
 
 def create_landmarkers(directory, stack):
@@ -125,6 +137,9 @@ def run_camera(camera_index, face, hands, speech, audio_stream, tone):
     monitor = Monitor()
     last_lips = None
     last_lips_at = 0.0
+    cover_in_progress = False
+    still_reference = None
+    last_sample_at = 0.0
     open_since = None
     timestamp = -1
     started = monotonic()
@@ -154,16 +169,35 @@ def run_camera(camera_index, face, hands, speech, audio_stream, tone):
             detected_hands = hands.detect_for_video(sample, timestamp).hand_landmarks
             ratio = None
             turned = False
+            current_lips = None
             if len(faces) == 1:
                 points = pixel_points(faces[0], width, height)
                 ratio = mouth_ratio(points)
                 turned = head_turned(points)
-                last_lips = [points[index] for index in INNER_LIPS]
-                last_lips_at = now
+                current_lips = [points[index] for index in LIP_OUTLINE]
 
-            overlap = (last_lips is not None and now - last_lips_at <= 0.8 and
-                       hand_overlaps_mouth(detected_hands, last_lips, width, height))
+            # Keep the last clear outline while the model is fitting landmarks to a hand.
+            previous_lips = last_lips if cover_in_progress or now - last_lips_at <= 1.25 else None
+            overlap = len(faces) < 2 and any(
+                hand_overlaps_mouth(detected_hands, lips, width, height)
+                for lips in (current_lips, previous_lips) if lips is not None
+            )
+            cover_in_progress = overlap
+            if current_lips is not None and not overlap:
+                last_lips = current_lips
+                last_lips_at = now
             covered = monitor.update(now, ratio, overlap)
+            if current_lips is None or overlap or turned:
+                still_reference = None
+                monitor.observe_stillness(now, False)
+            elif now - last_sample_at >= 0.25:
+                last_sample_at = now
+                sample = face_sample(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), points)
+                stable = sample is not None and still_reference is not None and (
+                    cv2.mean(cv2.absdiff(sample, still_reference))[0] <= 1.2)
+                if not stable:
+                    still_reference = sample
+                monitor.observe_stillness(now, stable)
             is_open = ratio is not None and ratio >= OPEN_THRESHOLD
             if is_open and not overlap and not monitor.steps and monitor.result is None:
                 if open_since is None:
@@ -179,8 +213,9 @@ def run_camera(camera_index, face, hands, speech, audio_stream, tone):
                 reasons.append("MOUTH COVERED")
             if speaking:
                 reasons.append("SPEECH DETECTED")
-            if monitor.result and monitor.result.startswith("CHEATING"):
-                reasons.append("CHEATING? CHECK FAILED")
+            if monitor.failed:
+                reasons.append("CHEATING? STATIC FACE" if monitor.still_check
+                               else "CHEATING? CHECK FAILED")
             if bool(reasons) != speech.alarm_playing:
                 speech.muted_until = now + 0.10
                 speech.alarm_playing = bool(reasons)
@@ -196,6 +231,8 @@ def run_camera(camera_index, face, hands, speech, audio_stream, tone):
                 cv2.polylines(frame, [outline], True, color, max(2, width // 450), cv2.LINE_AA)
             status = "Mouth open" if is_open else (
                 "Mouth closed" if ratio is not None else f"Faces tracked: {len(faces)}")
+            if monitor.steps and monitor.still_check:
+                status = "Still face: checking movement"
             reading = "--" if ratio is None else f"{ratio:.2f}"
             prompt = None
             if monitor.steps:
@@ -212,6 +249,7 @@ def run_camera(camera_index, face, hands, speech, audio_stream, tone):
             if key in (ord("r"), ord("R")):
                 monitor = Monitor()
                 open_since = None
+                still_reference = None
             ok, image = camera.read()
     finally:
         if speech.alarm_playing:
