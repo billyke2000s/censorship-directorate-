@@ -1,17 +1,18 @@
 """Decision logic independent of the camera and graphical interface."""
 
-from math import dist
+from math import atan2, degrees, dist
 
 
 OPEN_THRESHOLD = 0.30
 CLOSED_THRESHOLD = 0.22
 COVER_DELAY = 0.35
 STILL_SECONDS = 5
+TURN_TRACKING_GRACE = 1.5
 WARNING_DELAYS = {
     "CAMERA COVERED": 0.6,
     "FACE NOT VISIBLE": 1.0,
     "MULTIPLE FACES": 1.0,
-    "HEAD TURNED AWAY": 2.0,
+    "HEAD TURNED AWAY": 0.65,
 }
 
 LIP_OUTLINE = (61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291,
@@ -31,14 +32,18 @@ def mouth_open_alarm(ratio, hand_over_mouth, was_open):
     return not hand_over_mouth and ratio is not None and ratio >= threshold
 
 
-def head_turned(points):
+def head_turned(points, transform=None):
+    if transform is not None:
+        yaw = degrees(atan2(transform[0][2], transform[2][2]))
+        if abs(yaw) >= 25:
+            return True
     left, right, nose = points[33], points[263], points[1]
     eye_x, eye_y = right[0] - left[0], right[1] - left[1]
     width_squared = eye_x ** 2 + eye_y ** 2
     if width_squared < 1:
         return False
     projection = ((nose[0] - left[0]) * eye_x + (nose[1] - left[1]) * eye_y) / width_squared
-    return not 0.18 <= projection <= 0.82
+    return not 0.24 <= projection <= 0.76
 
 
 class Monitor:
@@ -46,6 +51,7 @@ class Monitor:
         self.cover_started = None
         self.warning_since = {}
         self.still_since = None
+        self.last_turn_at = None
 
     def observe_stillness(self, now, stable):
         if not stable:
@@ -54,12 +60,17 @@ class Monitor:
         if self.still_since is None:
             self.still_since = now
 
-    def camera_warnings(self, now, face_count, turned, lens_obscured=False):
+    def camera_warnings(self, now, face_count, turned, lens_obscured=False, profile=False):
+        if lens_obscured or face_count > 1 or (face_count == 1 and not turned):
+            self.last_turn_at = None
+        elif (face_count == 1 and turned) or (face_count == 0 and profile):
+            self.last_turn_at = now
+        away = self.last_turn_at is not None and now - self.last_turn_at <= TURN_TRACKING_GRACE
         observed = {
             "CAMERA COVERED": lens_obscured and face_count == 0,
-            "FACE NOT VISIBLE": face_count == 0 and not lens_obscured,
+            "FACE NOT VISIBLE": face_count == 0 and not lens_obscured and not away,
             "MULTIPLE FACES": face_count > 1,
-            "HEAD TURNED AWAY": face_count == 1 and turned,
+            "HEAD TURNED AWAY": away,
         }
         active = []
         for name, delay in WARNING_DELAYS.items():

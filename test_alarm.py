@@ -44,8 +44,24 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(monitor.camera_warnings(2, 2, False), [])
         self.assertEqual(monitor.camera_warnings(3, 2, False), ["MULTIPLE FACES"])
         self.assertEqual(monitor.camera_warnings(4, 1, True), [])
-        self.assertEqual(monitor.camera_warnings(6, 1, True), ["HEAD TURNED AWAY"])
+        self.assertEqual(monitor.camera_warnings(4.7, 1, True), ["HEAD TURNED AWAY"])
         self.assertEqual(monitor.camera_warnings(7, 1, False), [])
+
+    def test_turn_stays_active_through_landmark_loss_and_profile_detection(self):
+        monitor = Monitor()
+        self.assertEqual(monitor.camera_warnings(0, 1, True), [])
+        self.assertEqual(monitor.camera_warnings(0.7, 0, False), ["HEAD TURNED AWAY"])
+        self.assertEqual(monitor.camera_warnings(1.3, 0, False, profile=True), ["HEAD TURNED AWAY"])
+        self.assertEqual(monitor.camera_warnings(2.5, 0, False), ["HEAD TURNED AWAY"])
+        self.assertEqual(monitor.camera_warnings(2.9, 0, False), [])
+        self.assertEqual(monitor.camera_warnings(4, 0, False), ["FACE NOT VISIBLE"])
+
+    def test_turn_can_be_detected_from_rotation_with_centered_nose(self):
+        points = [(0, 0)] * 468
+        points[33], points[263], points[1] = (10, 10), (50, 10), (30, 25)
+        for sine, expected in ((0.5, True), (-0.5, True), (0.0, False)):
+            transform = [[0.866, 0, sine], [0, 1, 0], [-sine, 0, 0.866]]
+            self.assertEqual(head_turned(points, transform), expected)
 
     def test_head_turn_uses_nose_position_along_eye_line(self):
         points = [(0, 0)] * 468

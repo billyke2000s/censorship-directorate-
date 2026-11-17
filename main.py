@@ -84,6 +84,17 @@ def lens_likely_covered(frame):
     return high - low <= 13 and texture <= 1.6
 
 
+def side_profile_visible(detector, frame):
+    height, width = frame.shape[:2]
+    scale = min(1, 480 / max(width, height))
+    small = cv2.resize(frame, (max(1, round(width * scale)), max(1, round(height * scale))),
+                       interpolation=cv2.INTER_AREA)
+    gray = cv2.equalizeHist(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY))
+    options = dict(scaleFactor=1.15, minNeighbors=5, minSize=(42, 42))
+    return (len(detector.detectMultiScale(gray, **options)) > 0 or
+            len(detector.detectMultiScale(cv2.flip(gray, 1), **options)) > 0)
+
+
 def create_landmarkers(directory, stack):
     from mediapipe.tasks.python import BaseOptions, vision
 
@@ -93,6 +104,7 @@ def create_landmarkers(directory, stack):
             base_options=BaseOptions(model_asset_path=str(directory / MODELS[0])),
             running_mode=mode,
             num_faces=2,
+            output_facial_transformation_matrixes=True,
         )))
     hands = stack.enter_context(vision.HandLandmarker.create_from_options(
         vision.HandLandmarkerOptions(
@@ -205,6 +217,9 @@ def run_camera(camera_index, resolution, face, hands, speech, audio_stream, cabl
         raise RuntimeError("Could not open webcam. Check Windows camera access or try --camera 1.")
 
     monitor = Monitor()
+    profile_detector = cv2.CascadeClassifier(
+        str(Path(cv2.data.haarcascades) / "haarcascade_profileface.xml"))
+    next_profile_check = 0.0
     last_lips = None
     last_lips_at = 0.0
     cover_in_progress = False
@@ -232,7 +247,8 @@ def run_camera(camera_index, resolution, face, hands, speech, audio_stream, cabl
             timestamp = max(timestamp + 1, int((now - started) * 1000))
             sample = mp.Image(image_format=mp.ImageFormat.SRGB,
                               data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            faces = face.detect_for_video(sample, timestamp).face_landmarks
+            face_result = face.detect_for_video(sample, timestamp)
+            faces = face_result.face_landmarks
             detected_hands = hands.detect_for_video(sample, timestamp).hand_landmarks
             ratio = None
             turned = False
@@ -240,7 +256,8 @@ def run_camera(camera_index, resolution, face, hands, speech, audio_stream, cabl
             if len(faces) == 1:
                 points = pixel_points(faces[0], width, height)
                 ratio = mouth_ratio(points)
-                turned = head_turned(points)
+                transforms = face_result.facial_transformation_matrixes
+                turned = head_turned(points, transforms[0] if transforms else None)
                 current_lips = [points[index] for index in LIP_OUTLINE]
 
             # Keep the last clear outline while the model is fitting landmarks to a hand.
@@ -268,7 +285,12 @@ def run_camera(camera_index, resolution, face, hands, speech, audio_stream, cabl
             is_open = mouth_open_alarm(ratio, overlap, is_open)
             speaking = speech.active(now)
             lens_obscured = not faces and lens_likely_covered(frame)
-            reasons = monitor.camera_warnings(now, len(faces), turned, lens_obscured)
+            profile = False
+            if not faces and not lens_obscured and now >= next_profile_check:
+                next_profile_check = now + 0.30
+                if not profile_detector.empty():
+                    profile = side_profile_visible(profile_detector, frame)
+            reasons = monitor.camera_warnings(now, len(faces), turned, lens_obscured, profile)
             if covered:
                 reasons.append("MOUTH COVERED")
             if is_open:
@@ -292,6 +314,8 @@ def run_camera(camera_index, resolution, face, hands, speech, audio_stream, cabl
                 cv2.polylines(frame, [outline], True, color, max(2, width // 450), cv2.LINE_AA)
             status = "Mouth open" if is_open else (
                 "Mouth closed" if ratio is not None else f"Faces tracked: {len(faces)}")
+            if "HEAD TURNED AWAY" in reasons:
+                status = "Head turned away"
             reading = "--" if ratio is None else f"{ratio:.2f}"
             mic_status = "Mic disabled" if audio_stream is None else "Mic: English recognition"
             if cable is not None:
