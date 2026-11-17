@@ -7,7 +7,7 @@ class MonitorTests(unittest.TestCase):
     def test_camera_cover_is_debounced_and_clears_on_uncover(self):
         monitor = Monitor()
         self.assertEqual(monitor.camera_warnings(0, 0, False, True), [])
-        self.assertEqual(monitor.camera_warnings(0.6, 0, False, True), ["CAMERA LIKELY COVERED"])
+        self.assertEqual(monitor.camera_warnings(0.6, 0, False, True), ["CAMERA COVERED"])
         self.assertEqual(monitor.camera_warnings(0.7, 0, False), [])
         self.assertEqual(monitor.camera_warnings(1.8, 0, False), ["FACE NOT VISIBLE"])
         self.assertEqual(monitor.camera_warnings(2, 1, False, True), [])
