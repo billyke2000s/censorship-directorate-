@@ -208,10 +208,20 @@ def first_camera_frame(camera, requested):
     raise RuntimeError("The webcam did not send frames at the requested or default resolution.")
 
 
-def run_camera(camera_index, resolution, face, hands, speech, audio_stream, cable, tone):
-    camera = cv2.VideoCapture(camera_index)
+def select_obs_camera(cameras):
+    for camera in cameras:
+        if camera.name.strip().casefold() == "obs virtual camera":
+            return camera.index, camera.backend
+    raise RuntimeError("OBS Virtual Camera was not found. Start Virtual Camera in OBS, then reopen this launcher.")
+
+
+def run_camera(camera_index, camera_backend, resolution, face, hands, speech,
+               audio_stream, cable, tone):
+    camera = cv2.VideoCapture(camera_index, camera_backend)
     if not camera.isOpened():
         camera.release()
+        if camera_backend == cv2.CAP_DSHOW:
+            raise RuntimeError("Could not open OBS Virtual Camera. Check that it is running in OBS.")
         raise RuntimeError("Could not open webcam. Check Windows camera access or try --camera 1.")
 
     monitor = Monitor()
@@ -335,7 +345,9 @@ def main():
     from contextlib import ExitStack
 
     parser = argparse.ArgumentParser(description="Webcam mouth alarm for Windows")
-    parser.add_argument("--camera", type=int, default=0)
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--camera", type=int, default=0)
+    source.add_argument("--obs", action="store_true", help="Select OBS Virtual Camera by name")
     parser.add_argument("--resolution", type=camera_resolution,
                         help="Request WIDTHxHEIGHT; defaults to trying up to 3840x2160")
     parser.add_argument("--mic", type=int, help="Use this microphone device index")
@@ -351,6 +363,11 @@ def main():
     if args.cable_device is not None and not args.virtual_mic:
         parser.error("--cable-device requires --virtual-mic")
     try:
+        camera_index, camera_backend = args.camera, cv2.CAP_ANY
+        if args.obs and not args.check_models:
+            from cv2_enumerate_cameras import enumerate_cameras
+
+            camera_index, camera_backend = select_obs_camera(enumerate_cameras(cv2.CAP_DSHOW))
         missing = [name for name in MODELS if not (args.models / name).is_file()]
         if missing:
             raise RuntimeError("Missing models. Run setup-models.ps1 from the app folder.")
@@ -371,8 +388,9 @@ def main():
                 temp_dir = stack.enter_context(TemporaryDirectory(prefix="mouth-alarm-"))
                 tone = Path(temp_dir) / "alarm.wav"
                 write_tv_tone(tone)
-                run_camera(args.camera, args.resolution, face, hands, speech, stream, cable, tone)
-    except (RuntimeError, OSError, ValueError) as error:
+                run_camera(camera_index, camera_backend, args.resolution, face, hands,
+                           speech, stream, cable, tone)
+    except (RuntimeError, OSError, ValueError, ImportError) as error:
         parser.exit(1, f"Mouth Alarm: {error}\n")
 
 

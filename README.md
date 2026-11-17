@@ -52,12 +52,15 @@ The console tries camera modes up to 4K and displays the resolution it receives.
 | Launcher option | Purpose |
 | --- | --- |
 | `--camera 1` | Select a different camera. |
+| `--obs` | Open **OBS Virtual Camera** by name. |
 | `--resolution WIDTHxHEIGHT` | Request a camera mode, such as `1920x1080`. |
 | `--mic INDEX` | Select a microphone by its device index. |
 | `--no-mic` | Run with the camera only. |
 | `--check-models` | Load the face and hand models without opening the camera. |
 
 Pass options from PowerShell, for example `.\Start-MouthAlarm.cmd --camera 1`. To list microphone indexes after setup, run `.\.venv\Scripts\python.exe -m sounddevice`.
+
+For an OBS feed, click **Start Virtual Camera** in OBS, then double-click **`Start-OBS-Camera.cmd`**. If Windows does not list OBS Virtual Camera, the launcher displays an error instead of opening the built-in webcam.
 
 ## ORDER 04 · ROUTE CALL AUDIO
 
