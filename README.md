@@ -60,7 +60,7 @@ The console tries camera modes up to 4K and displays the resolution it receives.
 
 Pass options from PowerShell, for example `.\Start-MouthAlarm.cmd --camera 1`. To list microphone indexes after setup, run `.\.venv\Scripts\python.exe -m sounddevice`.
 
-For an OBS feed, click **Start Virtual Camera** in OBS, then double-click **`Start-OBS-Camera.cmd`**. If Windows does not list OBS Virtual Camera, the launcher displays an error instead of opening the built-in webcam.
+For an OBS feed, install [FFmpeg](https://ffmpeg.org/download.html#build-windows) and make sure `ffmpeg` is available in PowerShell. Click **Start Virtual Camera** in OBS, then double-click **`Start-OBS-Camera.cmd`**. The panel displays **Source: OBS Virtual Camera** when the feed opens. Select the DroidCam scene as the OBS Virtual Camera output to send that feed to the Directorate.
 
 ## ORDER 04 · ROUTE CALL AUDIO
 
