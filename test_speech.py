@@ -1,9 +1,20 @@
 import unittest
 
-from speech import SpeechState
+import numpy as np
+
+from speech import SpeechState, remove_alarm_tone
 
 
 class SpeechStateTests(unittest.TestCase):
+    def test_alarm_filter_preserves_audio_away_from_tone(self):
+        rate = 16000
+        time = np.arange(320) / rate
+        voice = 2000 * np.sin(2 * np.pi * 400 * time)
+        alarm = 8000 * np.sin(2 * np.pi * 1000 * time)
+        mixed = np.rint(voice + alarm).astype("<i2")
+        filtered = np.frombuffer(remove_alarm_tone(mixed.tobytes(), rate), dtype="<i2")
+        np.testing.assert_allclose(filtered, voice, atol=2)
+
     def test_one_voice_frame_does_not_trigger_alarm(self):
         state = SpeechState()
         state.update(1.0, True)

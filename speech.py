@@ -4,11 +4,23 @@ from collections import deque
 from time import monotonic
 
 
+def remove_alarm_tone(data, rate):
+    import numpy as np
+
+    samples = np.frombuffer(data, dtype="<i2")
+    bins = np.fft.rfft(samples)
+    frequencies = np.fft.rfftfreq(len(samples), 1 / rate)
+    bins[abs(frequencies - 1000) <= 100] = 0
+    cleaned = np.fft.irfft(bins, n=len(samples))
+    return np.clip(np.rint(cleaned), -32768, 32767).astype("<i2").tobytes()
+
+
 class SpeechState:
     def __init__(self):
         self.recent = deque(maxlen=5)
         self.active_until = 0.0
         self.muted_until = 0.0
+        self.alarm_playing = False
 
     def update(self, now, voiced):
         if now < self.muted_until:
@@ -42,7 +54,10 @@ def microphone(device, state):
         def callback(data, frames, _time, status):
             now = monotonic()
             if not status and frames == frame_size and now >= state.muted_until:
-                state.update(now, detector.is_speech(bytes(data), rate))
+                pcm = bytes(data)
+                if state.alarm_playing:
+                    pcm = remove_alarm_tone(pcm, rate)
+                state.update(now, detector.is_speech(pcm, rate))
 
         stream = None
         try:

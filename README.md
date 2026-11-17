@@ -2,10 +2,11 @@
 
 A local Windows demo inspired by [Raul Engineer's Short](https://www.youtube.com/shorts/dYAdNCzWI3o). It uses your webcam and microphone. Audio and video are processed locally without recording, transcription, or uploads.
 
-- A green outline marks closed lips. The outline turns red when the mouth aspect ratio reaches 0.30.
+- The outline follows the outer lip contour. It is green while the mouth is closed and turns red when the mouth aspect ratio reaches 0.30. The ratio is measured from the inner lips.
 - The app beeps while a tracked hand covers most of the mouth. It requires roughly a third of a second of overlap.
 - The microphone uses WebRTC voice activity detection to beep when it detects speech, including speech off camera. Nearby voices and recordings can also trigger it. Quiet speech and background noise can affect detection.
-- The console sounds a 1 kHz TV-style tone and lists active reasons alongside the live view. It flags a missing face or multiple faces after one second and a sustained sideways head turn after two seconds.
+- The console plays a continuous 1 kHz TV-style tone while an alarm is active and lists the reasons beside the live view. It flags a missing face or multiple faces after one second and a sustained sideways head turn after two seconds.
+- The app requests 1080p and displays the resolution the camera actually delivers. The preview preserves the original aspect ratio.
 - Holding an open-mouth pose for three seconds starts a movement check. You can also press **L**. Follow the open and closed prompts, holding each pose briefly. If the sequence times out, the alarm panel shows **CHEATING? CHECK FAILED** and sounds the tone.
 - Press **R** to clear the result and rearm the automatic check. Press **Esc** to quit.
 

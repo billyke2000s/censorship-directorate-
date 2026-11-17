@@ -1,7 +1,6 @@
 import argparse
-from io import BytesIO
 from pathlib import Path
-from threading import Thread
+from tempfile import TemporaryDirectory
 from time import monotonic
 import wave
 import winsound
@@ -10,7 +9,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 
-from alarm import LIP_OUTLINE, OPEN_THRESHOLD, Monitor, head_turned, mouth_ratio
+from alarm import INNER_LIPS, LIP_OUTLINE, OPEN_THRESHOLD, Monitor, head_turned, mouth_ratio
 from speech import SpeechState, microphone
 
 
@@ -21,16 +20,13 @@ GREEN = (110, 235, 125)
 PANEL = (23, 24, 30)
 
 
-def tv_tone():
+def write_tv_tone(path):
     rate = 16000
-    time = np.arange(int(rate * 0.28)) / rate
-    fade = np.clip(np.minimum(time, 0.28 - time) * 180, 0, 1)
-    samples = (np.sin(2 * np.pi * 1000 * time) * fade * 8500).astype("<i2")
-    output = BytesIO()
-    with wave.open(output, "wb") as audio:
+    time = np.arange(rate * 2) / rate
+    samples = (np.sin(2 * np.pi * 1000 * time) * 8500).astype("<i2")
+    with wave.open(str(path), "wb") as audio:
         audio.setparams((1, 2, rate, 0, "NONE", "not compressed"))
         audio.writeframes(samples.tobytes())
-    return output.getvalue()
 
 
 def pixel_points(landmarks, width, height):
@@ -87,68 +83,86 @@ def draw_label(frame, label, y, color=(240, 240, 240), size=0.60, x=16):
 
 
 def render_console(frame, reasons, prompt, status, mic_status, reading, result):
-    screen = np.full((610, 950, 3), PANEL, dtype=np.uint8)
-    screen[72:552, 16:656] = frame
-    cv2.rectangle(screen, (15, 71), (656, 552), RED if reasons else (80, 83, 91), 1)
-    cv2.rectangle(screen, (672, 72), (934, 552), (38, 40, 48), -1)
+    screen = np.full((745, 1190, 3), PANEL, dtype=np.uint8)
+    height, width = frame.shape[:2]
+    scale = min(880 / width, 600 / height)
+    view = cv2.resize(frame, (round(width * scale), round(height * scale)),
+                      interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR)
+    y = 72 + (600 - view.shape[0]) // 2
+    x = 16 + (880 - view.shape[1]) // 2
+    screen[y:y + view.shape[0], x:x + view.shape[1]] = view
+    cv2.rectangle(screen, (15, 71), (896, 672), RED if reasons else (80, 83, 91), 1)
+    cv2.rectangle(screen, (912, 72), (1174, 672), (38, 40, 48), -1)
     color = RED if reasons else GREEN
     draw_label(screen, "CENSORSHIP SYSTEM", 39, RED, 0.95)
-    draw_label(screen, "LIVE MONITOR", 38, (185, 186, 198), 0.58, 785)
-    draw_label(screen, "ALARM ACTIVE" if reasons else "MONITORING", 110, color, 0.70, 688)
+    draw_label(screen, "LIVE MONITOR", 38, (185, 186, 198), 0.58, 1025)
+    draw_label(screen, "ALARM ACTIVE" if reasons else "MONITORING", 110, color, 0.70, 928)
     for index, reason in enumerate(reasons):
-        draw_label(screen, reason, 145 + index * 26, RED, 0.54, 688)
+        draw_label(screen, reason, 145 + index * 26, RED, 0.54, 928)
     if prompt:
-        draw_label(screen, prompt, 342, (125, 218, 255), 0.49, 688)
+        draw_label(screen, prompt, 342, (125, 218, 255), 0.49, 928)
     elif result:
         draw_label(screen, "MOUTH CHECK PASSED" if not result.startswith("CHEATING")
-                   else "MOVEMENT NOT VERIFIED", 342, color, 0.52, 688)
-    draw_label(screen, status, 411, size=0.56, x=688)
-    draw_label(screen, f"MAR {reading}  /  {OPEN_THRESHOLD:.2f}", 448, size=0.54, x=688)
-    draw_label(screen, mic_status, 482, size=0.54, x=688)
-    draw_label(screen, "L  Movement check     R  Reset     Esc  Exit", 586, (205, 205, 215))
+                   else "MOVEMENT NOT VERIFIED", 342, color, 0.52, 928)
+    draw_label(screen, status, 411, size=0.56, x=928)
+    draw_label(screen, f"MAR {reading}  /  {OPEN_THRESHOLD:.2f}", 448, size=0.54, x=928)
+    draw_label(screen, mic_status, 482, size=0.54, x=928)
+    draw_label(screen, f"Camera {width} x {height}", 516, size=0.54, x=928)
+    draw_label(screen, "L  Movement check     R  Reset     Esc  Exit", 713, (205, 205, 215))
     return screen
 
 
-def run_camera(camera_index, face, hands, speech, audio_stream):
+def run_camera(camera_index, face, hands, speech, audio_stream, tone):
     camera = cv2.VideoCapture(camera_index)
     if not camera.isOpened():
         camera.release()
         raise RuntimeError("Could not open webcam. Check Windows camera access or try --camera 1.")
 
+    original_width = camera.get(cv2.CAP_PROP_FRAME_WIDTH)
+    original_height = camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
     monitor = Monitor()
-    tone = tv_tone()
     last_lips = None
-    last_lips_at = last_beep = 0.0
-    beep_reasons = []
+    last_lips_at = 0.0
     open_since = None
     timestamp = -1
     started = monotonic()
     try:
+        ok, image = camera.read()
+        if not ok:
+            camera.set(cv2.CAP_PROP_FRAME_WIDTH, original_width)
+            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, original_height)
+            ok, image = camera.read()
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
         while True:
             if audio_stream is not None and not audio_stream.active:
                 raise RuntimeError("The microphone stopped. Reconnect it and restart.")
-            ok, image = camera.read()
             if not ok:
                 raise RuntimeError("The webcam stopped sending frames.")
-            frame = cv2.resize(cv2.flip(image, 1), (640, 480))
+            frame = cv2.flip(image, 1)
+            height, width = frame.shape[:2]
+            tracking_scale = min(1, 1280 / max(width, height))
+            tracking_frame = frame if tracking_scale == 1 else cv2.resize(
+                frame, (round(width * tracking_scale), round(height * tracking_scale)),
+                interpolation=cv2.INTER_AREA)
             now = monotonic()
             timestamp = max(timestamp + 1, int((now - started) * 1000))
             sample = mp.Image(image_format=mp.ImageFormat.SRGB,
-                              data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                              data=cv2.cvtColor(tracking_frame, cv2.COLOR_BGR2RGB))
             faces = face.detect_for_video(sample, timestamp).face_landmarks
             detected_hands = hands.detect_for_video(sample, timestamp).hand_landmarks
             ratio = None
             turned = False
             if len(faces) == 1:
-                points = pixel_points(faces[0], 640, 480)
+                points = pixel_points(faces[0], width, height)
                 ratio = mouth_ratio(points)
                 turned = head_turned(points)
-                last_lips = [points[index] for index in LIP_OUTLINE]
+                last_lips = [points[index] for index in INNER_LIPS]
                 last_lips_at = now
 
             overlap = (last_lips is not None and now - last_lips_at <= 0.8 and
-                       hand_overlaps_mouth(detected_hands, last_lips, 640, 480))
+                       hand_overlaps_mouth(detected_hands, last_lips, width, height))
             covered = monitor.update(now, ratio, overlap)
             is_open = ratio is not None and ratio >= OPEN_THRESHOLD
             if is_open and not overlap and not monitor.steps and monitor.result is None:
@@ -167,18 +181,19 @@ def run_camera(camera_index, face, hands, speech, audio_stream):
                 reasons.append("SPEECH DETECTED")
             if monitor.result and monitor.result.startswith("CHEATING"):
                 reasons.append("CHEATING? CHECK FAILED")
-            if reasons and now - last_beep >= 0.9:
-                speech.muted_until = now + 0.42
-                Thread(target=winsound.PlaySound, args=(tone, winsound.SND_MEMORY),
-                       daemon=True).start()
-                last_beep = now
-                beep_reasons = reasons.copy()
-            if now - last_beep < 0.30:
-                reasons = list(dict.fromkeys(beep_reasons + reasons))
+            if bool(reasons) != speech.alarm_playing:
+                speech.muted_until = now + 0.10
+                speech.alarm_playing = bool(reasons)
+                if reasons:
+                    winsound.PlaySound(str(tone), winsound.SND_FILENAME | winsound.SND_ASYNC |
+                                       winsound.SND_LOOP | winsound.SND_NODEFAULT)
+                else:
+                    winsound.PlaySound(None, 0)
 
             color = RED if is_open or covered else GREEN
             if len(faces) == 1:
-                cv2.polylines(frame, [np.int32(last_lips)], True, color, 2, cv2.LINE_AA)
+                outline = np.int32([points[index] for index in LIP_OUTLINE])
+                cv2.polylines(frame, [outline], True, color, max(2, width // 450), cv2.LINE_AA)
             status = "Mouth open" if is_open else (
                 "Mouth closed" if ratio is not None else f"Faces tracked: {len(faces)}")
             reading = "--" if ratio is None else f"{ratio:.2f}"
@@ -197,7 +212,10 @@ def run_camera(camera_index, face, hands, speech, audio_stream):
             if key in (ord("r"), ord("R")):
                 monitor = Monitor()
                 open_since = None
+            ok, image = camera.read()
     finally:
+        if speech.alarm_playing:
+            winsound.PlaySound(None, 0)
         camera.release()
         cv2.destroyAllWindows()
 
@@ -230,7 +248,10 @@ def main():
                     except (RuntimeError, OSError, ValueError, ImportError) as error:
                         raise RuntimeError(f"{error}. Check Windows microphone access or use --no-mic.") from error
                     stack.callback(stream.close)
-                run_camera(args.camera, face, hands, speech, stream)
+                temp_dir = stack.enter_context(TemporaryDirectory(prefix="mouth-alarm-"))
+                tone = Path(temp_dir) / "alarm.wav"
+                write_tv_tone(tone)
+                run_camera(args.camera, face, hands, speech, stream, tone)
     except (RuntimeError, OSError, ValueError) as error:
         parser.exit(1, f"Mouth Alarm: {error}\n")
 
