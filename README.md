@@ -1,16 +1,17 @@
-<div align="center">
+<p align="center">
+  <img src="docs/images/directorate-banner.jpg" alt="Censorship Directorate. Remain in frame. Red propaganda poster featuring a surveillance camera." width="100%">
+</p>
 
-# CENSORSHIP DIRECTORATE
+<p align="center"><strong>PUBLIC ADDRESS CONTROL DIVISION</strong><br>
+WINDOWS SURVEILLANCE CONSOLE · OPERATOR MANUAL</p>
 
-**PUBLIC ADDRESS CONTROL DIVISION**
+<p align="center">
+  <a href="#order-01--activate-the-station">ACTIVATION</a> ·
+  <a href="#order-02--read-the-alarm-panel">ALARM REGISTER</a> ·
+  <a href="#order-04--route-call-audio">CALL AUDIO</a>
+</p>
 
-`OPERATOR MANUAL · WINDOWS SURVEILLANCE CONSOLE`
-
-**REMAIN IN FRAME. FACE FORWARD. KEEP SILENT.**
-
-</div>
-
----
+<img src="docs/images/red-divider.png" alt="" width="100%">
 
 *Fictional surveillance software inspired by Raul Engineer’s demo.* [Original short](https://www.youtube.com/shorts/dYAdNCzWI3o)
 
@@ -25,6 +26,11 @@ Use the same launcher for each session. Close the station with the window’s **
 ## ORDER 02 · READ THE ALARM PANEL
 
 The station sounds a continuous **1 kHz television test tone** while an alarm is active. The right-hand panel lists every active alarm.
+
+<p align="center">
+  <img src="docs/images/console-demo.jpg" alt="The Censorship Directorate app showing its red alarm panel with Mouth Open and Mic Word Detected active." width="100%"><br>
+  <em>Console demonstration with an illustrated camera feed.</em>
+</p>
 
 | Alarm | Trigger |
 | --- | --- |
@@ -61,7 +67,7 @@ Pass options from PowerShell, for example `.\Start-MouthAlarm.cmd --camera 1`. T
 
 The call receives microphone audio during clear periods and the tone during detected alarms. Routing adds about **0.9 seconds** of buffering plus device latency. Late or missed detections can let speech through, and some call apps suppress sustained tones.
 
----
+<img src="docs/images/red-divider.png" alt="" width="100%">
 
 ## TECHNICAL ANNEX · MANUAL SETUP
 
