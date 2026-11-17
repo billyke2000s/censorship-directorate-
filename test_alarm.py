@@ -4,6 +4,24 @@ from alarm import Monitor, head_turned, mouth_ratio
 
 
 class MonitorTests(unittest.TestCase):
+    def test_still_face_prompts_then_flags_failed_check(self):
+        monitor = Monitor()
+        monitor.observe_stillness(0, True)
+        monitor.observe_stillness(4.9, True)
+        self.assertFalse(monitor.steps)
+        monitor.observe_stillness(5, True)
+        self.assertTrue(monitor.steps)
+        self.assertTrue(monitor.still_check)
+        monitor.update(20, 0.1, False)
+        self.assertTrue(monitor.failed)
+
+    def test_motion_interrupts_still_face_timer(self):
+        monitor = Monitor()
+        monitor.observe_stillness(0, True)
+        monitor.observe_stillness(4, False)
+        monitor.observe_stillness(5, True)
+        self.assertFalse(monitor.steps)
+
     def test_visibility_warnings_wait_and_clear(self):
         monitor = Monitor()
         self.assertEqual(monitor.camera_warnings(0, 0, False), [])
