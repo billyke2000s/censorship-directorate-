@@ -112,8 +112,13 @@ def render_console(frame, reasons, status, mic_status, reading):
     screen = np.full((745, 1190, 3), PANEL, dtype=np.uint8)
     height, width = frame.shape[:2]
     scale = min(880 / width, 600 / height)
+    fill_scale = max(880 / width, 600 / height)
+    scale = min(scale * 1.12, fill_scale)
     view = cv2.resize(frame, (round(width * scale), round(height * scale)),
                       interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR)
+    crop_y = max(0, (view.shape[0] - 600) // 2)
+    crop_x = max(0, (view.shape[1] - 880) // 2)
+    view = view[crop_y:crop_y + 600, crop_x:crop_x + 880]
     y = 72 + (600 - view.shape[0]) // 2
     x = 16 + (880 - view.shape[1]) // 2
     screen[y:y + view.shape[0], x:x + view.shape[1]] = view
