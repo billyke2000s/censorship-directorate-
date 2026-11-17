@@ -1,19 +1,36 @@
 import argparse
+from io import BytesIO
 from pathlib import Path
 from threading import Thread
 from time import monotonic
+import wave
 import winsound
 
 import cv2
 import mediapipe as mp
 import numpy as np
 
-from alarm import LIP_OUTLINE, OPEN_THRESHOLD, Monitor, mouth_ratio
+from alarm import LIP_OUTLINE, OPEN_THRESHOLD, Monitor, head_turned, mouth_ratio
 from speech import SpeechState, microphone
 
 
-WINDOW = "Mouth Alarm"
+WINDOW = "Censorship System"
 MODELS = ("face_landmarker.task", "hand_landmarker.task")
+RED = (80, 89, 255)
+GREEN = (110, 235, 125)
+PANEL = (23, 24, 30)
+
+
+def tv_tone():
+    rate = 16000
+    time = np.arange(int(rate * 0.28)) / rate
+    fade = np.clip(np.minimum(time, 0.28 - time) * 180, 0, 1)
+    samples = (np.sin(2 * np.pi * 1000 * time) * fade * 8500).astype("<i2")
+    output = BytesIO()
+    with wave.open(output, "wb") as audio:
+        audio.setparams((1, 2, rate, 0, "NONE", "not compressed"))
+        audio.writeframes(samples.tobytes())
+    return output.getvalue()
 
 
 def pixel_points(landmarks, width, height):
@@ -53,6 +70,7 @@ def create_landmarkers(directory, stack):
         vision.FaceLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=str(directory / MODELS[0])),
             running_mode=mode,
+            num_faces=2,
         )))
     hands = stack.enter_context(vision.HandLandmarker.create_from_options(
         vision.HandLandmarkerOptions(
@@ -63,9 +81,32 @@ def create_landmarkers(directory, stack):
     return face, hands
 
 
-def draw_label(frame, label, y, color=(240, 240, 240), size=0.60):
-    cv2.putText(frame, label, (16, y), cv2.FONT_HERSHEY_SIMPLEX, size, color, 2,
+def draw_label(frame, label, y, color=(240, 240, 240), size=0.60, x=16):
+    cv2.putText(frame, label, (x, y), cv2.FONT_HERSHEY_SIMPLEX, size, color, 1,
                 cv2.LINE_AA)
+
+
+def render_console(frame, reasons, prompt, status, mic_status, reading, result):
+    screen = np.full((610, 950, 3), PANEL, dtype=np.uint8)
+    screen[72:552, 16:656] = frame
+    cv2.rectangle(screen, (15, 71), (656, 552), RED if reasons else (80, 83, 91), 1)
+    cv2.rectangle(screen, (672, 72), (934, 552), (38, 40, 48), -1)
+    color = RED if reasons else GREEN
+    draw_label(screen, "CENSORSHIP SYSTEM", 39, RED, 0.95)
+    draw_label(screen, "LIVE MONITOR", 38, (185, 186, 198), 0.58, 785)
+    draw_label(screen, "ALARM ACTIVE" if reasons else "MONITORING", 110, color, 0.70, 688)
+    for index, reason in enumerate(reasons):
+        draw_label(screen, reason, 145 + index * 26, RED, 0.54, 688)
+    if prompt:
+        draw_label(screen, prompt, 342, (125, 218, 255), 0.49, 688)
+    elif result:
+        draw_label(screen, "MOUTH CHECK PASSED" if not result.startswith("CHEATING")
+                   else "MOVEMENT NOT VERIFIED", 342, color, 0.52, 688)
+    draw_label(screen, status, 411, size=0.56, x=688)
+    draw_label(screen, f"MAR {reading}  /  {OPEN_THRESHOLD:.2f}", 448, size=0.54, x=688)
+    draw_label(screen, mic_status, 482, size=0.54, x=688)
+    draw_label(screen, "L  Movement check     R  Reset     Esc  Exit", 586, (205, 205, 215))
+    return screen
 
 
 def run_camera(camera_index, face, hands, speech, audio_stream):
@@ -75,8 +116,10 @@ def run_camera(camera_index, face, hands, speech, audio_stream):
         raise RuntimeError("Could not open webcam. Check Windows camera access or try --camera 1.")
 
     monitor = Monitor()
+    tone = tv_tone()
     last_lips = None
     last_lips_at = last_beep = 0.0
+    beep_reasons = []
     open_since = None
     timestamp = -1
     started = monotonic()
@@ -96,9 +139,11 @@ def run_camera(camera_index, face, hands, speech, audio_stream):
             faces = face.detect_for_video(sample, timestamp).face_landmarks
             detected_hands = hands.detect_for_video(sample, timestamp).hand_landmarks
             ratio = None
-            if faces:
+            turned = False
+            if len(faces) == 1:
                 points = pixel_points(faces[0], 640, 480)
                 ratio = mouth_ratio(points)
+                turned = head_turned(points)
                 last_lips = [points[index] for index in LIP_OUTLINE]
                 last_lips_at = now
 
@@ -115,35 +160,35 @@ def run_camera(camera_index, face, hands, speech, audio_stream):
             else:
                 open_since = None
             speaking = speech.active(now)
-            if (covered or speaking) and now - last_beep >= 0.75:
-                speech.muted_until = now + 0.35
-                Thread(target=winsound.Beep, args=(1000, 130), daemon=True).start()
+            reasons = monitor.camera_warnings(now, len(faces), turned)
+            if covered:
+                reasons.append("MOUTH COVERED")
+            if speaking:
+                reasons.append("SPEECH DETECTED")
+            if monitor.result and monitor.result.startswith("CHEATING"):
+                reasons.append("CHEATING? CHECK FAILED")
+            if reasons and now - last_beep >= 0.9:
+                speech.muted_until = now + 0.42
+                Thread(target=winsound.PlaySound, args=(tone, winsound.SND_MEMORY),
+                       daemon=True).start()
                 last_beep = now
+                beep_reasons = reasons.copy()
+            if now - last_beep < 0.30:
+                reasons = list(dict.fromkeys(beep_reasons + reasons))
 
-            red = (75, 85, 255)
-            green = (110, 235, 125)
-            color = red if is_open or covered else green
-            if faces:
+            color = RED if is_open or covered else GREEN
+            if len(faces) == 1:
                 cv2.polylines(frame, [np.int32(last_lips)], True, color, 2, cv2.LINE_AA)
-            status = "MOUTH COVERED" if covered else "MOUTH OPEN - ALARM" if is_open else (
-                "Mouth closed" if ratio is not None else "Face not tracked")
-            frame[:92] = (22, 22, 22)
-            frame[-60:] = (22, 22, 22)
-            draw_label(frame, status, 30, color if ratio is not None or covered else (235, 235, 235))
+            status = "Mouth open" if is_open else (
+                "Mouth closed" if ratio is not None else f"Faces tracked: {len(faces)}")
             reading = "--" if ratio is None else f"{ratio:.2f}"
-            draw_label(frame, f"MAR {reading}   |   Open threshold {OPEN_THRESHOLD:.2f}", 59)
+            prompt = None
             if monitor.steps:
-                pose = "Open your mouth" if monitor.steps[0] == "open" else "Close your mouth"
-                draw_label(frame, f"{pose} and hold  |  {max(0, monitor.deadline - now):.0f}s",
-                           84)
-            elif monitor.result:
-                draw_label(frame, monitor.result, 84,
-                           red if monitor.result.startswith("CHEATING") else green)
-            mic_status = "Mic disabled" if audio_stream is None else (
-                "SPEECH DETECTED" if speaking else "Mic listening")
-            draw_label(frame, mic_status, 477, red if speaking else (240, 240, 240))
-            draw_label(frame, "L  Mouth movement check   |   R  Reset   |   Esc  Exit", 454)
-            cv2.imshow(WINDOW, frame)
+                pose = "Open" if monitor.steps[0] == "open" else "Close"
+                prompt = f"{pose} mouth and hold  {max(0, monitor.deadline - now):.0f}s"
+            mic_status = "Mic disabled" if audio_stream is None else "Mic listening"
+            cv2.imshow(WINDOW, render_console(frame, reasons, prompt, status, mic_status,
+                                               reading, monitor.result))
             key = cv2.waitKey(1) & 0xFF
             if key == 27 or cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
                 break
