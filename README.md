@@ -9,7 +9,7 @@ A local Windows demo inspired by [Raul Engineer's Short](https://www.youtube.com
 - **CAMERA COVERED** sounds after roughly 0.6 seconds when no face is visible and the frame is very dark or nearly featureless. A dark room or plain wall can also trigger it.
 - The app tries common camera modes up to 4K, processes the full received frame, and shows the actual capture resolution. The preview trims black side bars and center-crops the image to fill the panel without stretching. To request another mode, run `Start-MouthAlarm.cmd --resolution WIDTHxHEIGHT` from a terminal.
 - A tracked face that stays nearly still for five seconds raises **FACE IMAGE STILL**. The warning clears when movement resumes.
-- Press **R** to reset detection. Press **Esc** to quit.
+- Close the app using the window's **X** button.
 
 A missing face can mean someone stepped away, covered the lens, or moved into poor lighting. A head turn is estimated from facial landmarks. Sitting very still can trip the still-image warning. These camera checks do not establish intent or reliably identify all props, moving overlays, or prerecorded inputs.
 

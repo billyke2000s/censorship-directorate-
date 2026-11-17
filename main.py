@@ -143,7 +143,7 @@ def fill_camera_preview(frame, panel_width, panel_height):
 
 
 def render_console(frame, reasons, status, mic_status, reading):
-    screen = np.full((745, 1190, 3), PANEL, dtype=np.uint8)
+    screen = np.full((690, 1190, 3), PANEL, dtype=np.uint8)
     height, width = frame.shape[:2]
     screen[72:672, 16:896] = fill_camera_preview(frame, 880, 600)
     cv2.rectangle(screen, (15, 71), (896, 672), RED if reasons else (80, 83, 91), 1)
@@ -163,8 +163,6 @@ def render_console(frame, reasons, status, mic_status, reading):
     draw_label(screen, f"MAR {reading}  /  {OPEN_THRESHOLD:.2f}", 448, size=0.54, x=928)
     draw_label(screen, mic_status, 482, size=0.54, x=928)
     draw_label(screen, f"Camera {width} x {height}", 516, size=0.54, x=928)
-    cv2.line(screen, (16, 688), (1174, 688), (26, 27, 156), 2)
-    draw_label(screen, "R  Reset     Esc  Exit", 719, PAPER)
     return screen
 
 
@@ -321,13 +319,9 @@ def run_camera(camera_index, resolution, face, hands, speech, audio_stream, cabl
             if cable is not None:
                 mic_status = "Virtual mic -> CABLE Output"
             cv2.imshow(WINDOW, render_console(frame, reasons, status, mic_status, reading))
-            key = cv2.waitKey(1) & 0xFF
-            if key == 27 or cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
+            cv2.waitKey(1)
+            if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
                 break
-            if key in (ord("r"), ord("R")):
-                monitor = Monitor()
-                is_open = False
-                still_reference = None
             ok, image = camera.read()
     finally:
         speech.camera_checked_at = 0.0
