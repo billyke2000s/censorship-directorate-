@@ -1,5 +1,6 @@
 import argparse
 from pathlib import Path
+from threading import Thread
 from time import monotonic
 import winsound
 
@@ -8,6 +9,7 @@ import mediapipe as mp
 import numpy as np
 
 from alarm import LIP_OUTLINE, OPEN_THRESHOLD, Monitor, mouth_ratio
+from speech import SpeechState, microphone
 
 
 WINDOW = "Mouth Alarm"
@@ -66,7 +68,7 @@ def draw_label(frame, label, y, color=(240, 240, 240), size=0.60):
                 cv2.LINE_AA)
 
 
-def run_camera(camera_index, face, hands):
+def run_camera(camera_index, face, hands, speech, audio_stream):
     camera = cv2.VideoCapture(camera_index)
     if not camera.isOpened():
         camera.release()
@@ -81,6 +83,8 @@ def run_camera(camera_index, face, hands):
     try:
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
         while True:
+            if audio_stream is not None and not audio_stream.active:
+                raise RuntimeError("The microphone stopped. Reconnect it and restart.")
             ok, image = camera.read()
             if not ok:
                 raise RuntimeError("The webcam stopped sending frames.")
@@ -110,8 +114,10 @@ def run_camera(camera_index, face, hands):
                     open_since = None
             else:
                 open_since = None
-            if covered and now - last_beep >= 0.75:
-                winsound.PlaySound("SystemExclamation", winsound.SND_ALIAS | winsound.SND_ASYNC)
+            speaking = speech.active(now)
+            if (covered or speaking) and now - last_beep >= 0.75:
+                speech.muted_until = now + 0.35
+                Thread(target=winsound.Beep, args=(1000, 130), daemon=True).start()
                 last_beep = now
 
             red = (75, 85, 255)
@@ -133,6 +139,9 @@ def run_camera(camera_index, face, hands):
             elif monitor.result:
                 draw_label(frame, monitor.result, 84,
                            red if monitor.result.startswith("CHEATING") else green)
+            mic_status = "Mic disabled" if audio_stream is None else (
+                "SPEECH DETECTED" if speaking else "Mic listening")
+            draw_label(frame, mic_status, 477, red if speaking else (240, 240, 240))
             draw_label(frame, "L  Mouth movement check   |   R  Reset   |   Esc  Exit", 454)
             cv2.imshow(WINDOW, frame)
             key = cv2.waitKey(1) & 0xFF
@@ -153,6 +162,8 @@ def main():
 
     parser = argparse.ArgumentParser(description="Webcam mouth alarm for Windows")
     parser.add_argument("--camera", type=int, default=0)
+    parser.add_argument("--mic", type=int, help="Use this microphone device index")
+    parser.add_argument("--no-mic", action="store_true", help="Run webcam checks only")
     parser.add_argument("--models", type=Path, default=Path.cwd() / "models")
     parser.add_argument("--check-models", action="store_true",
                         help="Load both models without opening the camera")
@@ -166,7 +177,15 @@ def main():
             if args.check_models:
                 print("Face and hand landmark models loaded.")
             else:
-                run_camera(args.camera, face, hands)
+                speech = SpeechState()
+                stream = None
+                if not args.no_mic:
+                    try:
+                        stream = microphone(args.mic, speech)
+                    except (RuntimeError, OSError, ValueError, ImportError) as error:
+                        raise RuntimeError(f"{error}. Check Windows microphone access or use --no-mic.") from error
+                    stack.callback(stream.close)
+                run_camera(args.camera, face, hands, speech, stream)
     except (RuntimeError, OSError, ValueError) as error:
         parser.exit(1, f"Mouth Alarm: {error}\n")
 

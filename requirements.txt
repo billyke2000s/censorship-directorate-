@@ -1,3 +1,5 @@
 mediapipe==1.2.3
 opencv-contrib-python==5.1.0.95
 numpy==2.5.5
+sounddevice==0.5.6
+webrtcvad-wheels==2.0.14.post1
