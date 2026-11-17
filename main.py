@@ -108,20 +108,32 @@ def draw_label(frame, label, y, color=(240, 240, 240), size=0.60, x=16):
                 cv2.LINE_AA)
 
 
+def fill_camera_preview(frame, panel_width, panel_height):
+    height, width = frame.shape[:2]
+    # Some portrait cameras send a landscape stream with black columns already embedded.
+    rows = frame[::max(1, height // 64)]
+    visible = np.flatnonzero((rows.max(axis=2) > 16).mean(axis=0) >= 0.10)
+    if visible.size:
+        left, right = int(visible[0]), int(visible[-1]) + 1
+        right_bar = width - right
+        if (min(left, right_bar) >= width * 0.04 and
+                abs(left - right_bar) <= width * 0.04 and right - left >= width * 0.20):
+            frame = frame[:, left:right]
+            width = right - left
+
+    crop_width = min(width, max(1, round(height * panel_width / panel_height)))
+    crop_height = min(height, max(1, round(width * panel_height / panel_width)))
+    x = (width - crop_width) // 2
+    y = (height - crop_height) // 2
+    crop = frame[y:y + crop_height, x:x + crop_width]
+    interpolation = cv2.INTER_AREA if crop_width > panel_width else cv2.INTER_LINEAR
+    return cv2.resize(crop, (panel_width, panel_height), interpolation=interpolation)
+
+
 def render_console(frame, reasons, status, mic_status, reading):
     screen = np.full((745, 1190, 3), PANEL, dtype=np.uint8)
     height, width = frame.shape[:2]
-    scale = min(880 / width, 600 / height)
-    fill_scale = max(880 / width, 600 / height)
-    scale = min(scale * 1.12, fill_scale)
-    view = cv2.resize(frame, (round(width * scale), round(height * scale)),
-                      interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR)
-    crop_y = max(0, (view.shape[0] - 600) // 2)
-    crop_x = max(0, (view.shape[1] - 880) // 2)
-    view = view[crop_y:crop_y + 600, crop_x:crop_x + 880]
-    y = 72 + (600 - view.shape[0]) // 2
-    x = 16 + (880 - view.shape[1]) // 2
-    screen[y:y + view.shape[0], x:x + view.shape[1]] = view
+    screen[72:672, 16:896] = fill_camera_preview(frame, 880, 600)
     cv2.rectangle(screen, (15, 71), (896, 672), RED if reasons else (80, 83, 91), 1)
     cv2.rectangle(screen, (0, 0), (1189, 54), (26, 27, 156), -1)
     cv2.rectangle(screen, (912, 72), (1174, 672), (27, 27, 34), -1)
