@@ -2,11 +2,10 @@
 
 from collections import deque
 from time import monotonic
+import numpy as np
 
 
 def remove_alarm_tone(data, rate):
-    import numpy as np
-
     samples = np.frombuffer(data, dtype="<i2")
     bins = np.fft.rfft(samples)
     frequencies = np.fft.rfftfreq(len(samples), 1 / rate)
@@ -15,9 +14,26 @@ def remove_alarm_tone(data, rate):
     return np.clip(np.rint(cleaned), -32768, 32767).astype("<i2").tobytes()
 
 
+def has_voice_energy(data, rate):
+    """Reject very quiet frames and narrow tones before accepting a VAD vote."""
+    samples = np.frombuffer(data, dtype="<i2").astype(np.float32)
+    samples -= samples.mean()
+    if np.mean(samples * samples) < 45 ** 2:
+        return False
+    power = np.abs(np.fft.rfft(samples * np.hanning(len(samples)))) ** 2
+    frequencies = np.fft.rfftfreq(len(samples), 1 / rate)
+    voice_band = power[(frequencies >= 150) & (frequencies <= 3500)]
+    in_band = voice_band.sum()
+    if in_band < 0.40 * power.sum():
+        return False
+    # A steady whistle or electronic beep concentrates energy in adjacent bins.
+    strongest = np.convolve(voice_band, np.ones(3), mode="valid").max()
+    return strongest < 0.85 * in_band
+
+
 class SpeechState:
     def __init__(self):
-        self.recent = deque(maxlen=5)
+        self.recent = deque(maxlen=13)
         self.active_until = 0.0
         self.muted_until = 0.0
         self.alarm_playing = False
@@ -26,8 +42,9 @@ class SpeechState:
         if now < self.muted_until:
             return
         self.recent.append(voiced)
-        if voiced and sum(self.recent) >= 3:
-            self.active_until = now + 0.45
+        votes_needed = 4 if self.active(now) else 8
+        if voiced and sum(self.recent) >= votes_needed:
+            self.active_until = now + 0.30
 
     def active(self, now):
         return now < self.active_until
@@ -48,7 +65,7 @@ def microphone(device, state):
     ))
     last_error = None
     for rate in rates:
-        detector = webrtcvad.Vad(2)
+        detector = webrtcvad.Vad(3)
         frame_size = rate // 50
 
         def callback(data, frames, _time, status):
@@ -57,7 +74,7 @@ def microphone(device, state):
                 pcm = bytes(data)
                 if state.alarm_playing:
                     pcm = remove_alarm_tone(pcm, rate)
-                state.update(now, detector.is_speech(pcm, rate))
+                state.update(now, detector.is_speech(pcm, rate) and has_voice_energy(pcm, rate))
 
         stream = None
         try:

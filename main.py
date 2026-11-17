@@ -15,9 +15,10 @@ from speech import SpeechState, microphone
 
 WINDOW = "Censorship System"
 MODELS = ("face_landmarker.task", "hand_landmarker.task")
-RED = (80, 89, 255)
+RED = (58, 61, 255)
 GREEN = (110, 235, 125)
-PANEL = (23, 24, 30)
+PANEL = (14, 15, 19)
+PAPER = (209, 220, 236)
 
 
 def write_tv_tone(path):
@@ -104,23 +105,30 @@ def render_console(frame, reasons, prompt, status, mic_status, reading, result):
     x = 16 + (880 - view.shape[1]) // 2
     screen[y:y + view.shape[0], x:x + view.shape[1]] = view
     cv2.rectangle(screen, (15, 71), (896, 672), RED if reasons else (80, 83, 91), 1)
-    cv2.rectangle(screen, (912, 72), (1174, 672), (38, 40, 48), -1)
-    color = RED if reasons else GREEN
-    draw_label(screen, "CENSORSHIP SYSTEM", 39, RED, 0.95)
-    draw_label(screen, "LIVE MONITOR", 38, (185, 186, 198), 0.58, 1025)
-    draw_label(screen, "ALARM ACTIVE" if reasons else "MONITORING", 110, color, 0.70, 928)
+    cv2.rectangle(screen, (0, 0), (1189, 54), (26, 27, 156), -1)
+    cv2.rectangle(screen, (912, 72), (1174, 672), (27, 27, 34), -1)
+    cv2.rectangle(screen, (912, 72), (1174, 125), RED if reasons else PAPER, -1)
+    color = RED if reasons else PAPER
+    draw_label(screen, "CENSORSHIP DIRECTORATE", 38, PAPER, 1.02)
+    draw_label(screen, "LIVE SURVEILLANCE", 36, PAPER, 0.55, 984)
+    draw_label(screen, "ALARM ACTIVE" if reasons else "UNDER OBSERVATION",
+               108, PANEL, 0.68, 928)
     for index, reason in enumerate(reasons):
-        draw_label(screen, reason, 145 + index * 26, RED, 0.54, 928)
+        y = 151 + index * 28
+        cv2.rectangle(screen, (928, y - 8), (934, y - 2), RED, -1)
+        draw_label(screen, reason, y, RED, 0.53, 943)
     if prompt:
         draw_label(screen, prompt, 342, (125, 218, 255), 0.49, 928)
     elif result:
         draw_label(screen, "MOUTH CHECK PASSED" if not result.startswith("CHEATING")
                    else "MOVEMENT NOT VERIFIED", 342, color, 0.52, 928)
-    draw_label(screen, status, 411, size=0.56, x=928)
+    cv2.line(screen, (928, 381), (1158, 381), (77, 75, 88), 1)
+    draw_label(screen, status, 411, PAPER, 0.56, 928)
     draw_label(screen, f"MAR {reading}  /  {OPEN_THRESHOLD:.2f}", 448, size=0.54, x=928)
     draw_label(screen, mic_status, 482, size=0.54, x=928)
     draw_label(screen, f"Camera {width} x {height}", 516, size=0.54, x=928)
-    draw_label(screen, "L  Movement check     R  Reset     Esc  Exit", 713, (205, 205, 215))
+    cv2.line(screen, (16, 688), (1174, 688), (26, 27, 156), 2)
+    draw_label(screen, "L  Verify movement     R  Reset     Esc  Exit", 719, PAPER)
     return screen
 
 
@@ -212,7 +220,7 @@ def run_camera(camera_index, face, hands, speech, audio_stream, tone):
             if covered:
                 reasons.append("MOUTH COVERED")
             if speaking:
-                reasons.append("SPEECH DETECTED")
+                reasons.append("MIC: SPEECH DETECTED")
             if monitor.failed:
                 reasons.append("CHEATING? STATIC FACE" if monitor.still_check
                                else "CHEATING? CHECK FAILED")
@@ -238,7 +246,7 @@ def run_camera(camera_index, face, hands, speech, audio_stream, tone):
             if monitor.steps:
                 pose = "Open" if monitor.steps[0] == "open" else "Close"
                 prompt = f"{pose} mouth and hold  {max(0, monitor.deadline - now):.0f}s"
-            mic_status = "Mic disabled" if audio_stream is None else "Mic listening"
+            mic_status = "Mic disabled" if audio_stream is None else "Mic: voice detection on"
             cv2.imshow(WINDOW, render_console(frame, reasons, prompt, status, mic_status,
                                                reading, monitor.result))
             key = cv2.waitKey(1) & 0xFF
