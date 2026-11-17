@@ -9,14 +9,13 @@ CLOSED_THRESHOLD = 0.22
 COVER_DELAY = 0.35
 POSE_SECONDS = 0.45
 CHALLENGE_SECONDS = 15
+STILL_SECONDS = 5
 WARNING_DELAYS = {
     "FACE NOT VISIBLE": 1.0,
     "MULTIPLE FACES": 1.0,
     "HEAD TURNED AWAY": 2.0,
 }
 
-INNER_LIPS = (78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308,
-              324, 318, 402, 317, 14, 87, 178, 88, 95)
 LIP_OUTLINE = (61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291,
                375, 321, 405, 314, 17, 84, 181, 91, 146)
 
@@ -47,6 +46,19 @@ class Monitor:
         self.held_since = None
         self.result = None
         self.warning_since = {}
+        self.still_since = None
+        self.still_check = False
+        self.still_retry_at = 0.0
+
+    def observe_stillness(self, now, stable):
+        if not stable:
+            self.still_since = None
+            return
+        if self.still_since is None:
+            self.still_since = now
+        elif (now - self.still_since >= STILL_SECONDS and now >= self.still_retry_at and
+              not self.steps and not self.failed):
+            self.challenge(now, still_check=True)
 
     def camera_warnings(self, now, face_count, turned):
         observed = {
@@ -64,13 +76,18 @@ class Monitor:
                 self.warning_since.pop(name, None)
         return active
 
-    def challenge(self, now, first=None):
+    @property
+    def failed(self):
+        return self.result is not None and self.result.startswith("CHEATING")
+
+    def challenge(self, now, first=None, *, still_check=False):
         first = first or choice(("open", "closed"))
         second = "closed" if first == "open" else "open"
         self.steps = [first, second, first]
         self.deadline = now + CHALLENGE_SECONDS
         self.held_since = None
         self.result = None
+        self.still_check = still_check
 
     def update(self, now, ratio, hand_over_mouth):
         if hand_over_mouth:
@@ -96,6 +113,7 @@ class Monitor:
                     self.held_since = None
                     if not self.steps:
                         self.result = "Mouth movement verified"
+                        self.still_retry_at = now + 30
             else:
                 self.held_since = None
 
