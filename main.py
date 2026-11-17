@@ -47,7 +47,8 @@ def hand_overlaps_mouth(hands, lips, width, height):
     # Use the palm and each finger separately to avoid filling gaps between fingers.
     groups = ((0, 1, 2, 5, 9, 13, 17), (1, 2, 3, 4), (5, 6, 7, 8),
               (9, 10, 11, 12), (13, 14, 15, 16), (17, 18, 19, 20))
-    margin = max(4, (right - left) * 0.13)
+    mouth_width = right - left
+    margin = max(4, mouth_width * 0.16)
     for hand in hands:
         points = pixel_points(hand, width, height)
         hulls = [
@@ -58,7 +59,54 @@ def hand_overlaps_mouth(hands, lips, width, height):
                      for probe in probes]
         if sum(distance >= -margin for distance in distances) >= 2 or distances[1] >= 0:
             return True
+        # Curled fingertips and foreshortened joints can shrink the individual hulls.
+        mouth_height = max(bottom - top, mouth_width * 0.24)
+        mouth_box = np.float32([
+            (left, center[1] - mouth_height / 2), (right, center[1] - mouth_height / 2),
+            (right, center[1] + mouth_height / 2), (left, center[1] + mouth_height / 2),
+        ])
+        hand_hull = cv2.convexHull(np.float32(points))
+        if len(hand_hull) >= 3 and mouth_width > 0:
+            area, _ = cv2.intersectConvexConvex(mouth_box, hand_hull)
+            if area >= 0.35 * mouth_width * mouth_height:
+                return True
     return False
+
+
+def project_mouth(lips, previous_eyes, eyes):
+    """Move the last clear lip position with the current eye line."""
+    old_left, old_right = map(complex_point, previous_eyes)
+    left, right = map(complex_point, eyes)
+    if abs(old_right - old_left) < 1 or abs(right - left) < 1:
+        return lips
+    scale_rotation = (right - left) / (old_right - old_left)
+    projected = [left + (complex_point(point) - old_left) * scale_rotation for point in lips]
+    return [(point.real, point.imag) for point in projected]
+
+
+def complex_point(point):
+    return complex(float(point[0]), float(point[1]))
+
+
+def draw_face_corners(frame, points, active):
+    height, width = frame.shape[:2]
+    bounds = np.asarray([points[index] for index in (10, 152, 234, 454)])
+    left, top = bounds.min(axis=0)
+    right, bottom = bounds.max(axis=0)
+    padding = max(5, (right - left) * 0.12)
+    left, top = max(0, round(left - padding)), max(0, round(top - padding))
+    right = min(width - 1, round(right + padding))
+    bottom = min(height - 1, round(bottom + padding))
+    length = round(min(right - left, bottom - top) * 0.19)
+    if length < 3:
+        return
+    color = RED if active else (90, 100, 225)
+    thickness = max(2, width // 600)
+    for x, y, dx, dy in ((left, top, 1, 1), (right, top, -1, 1),
+                         (left, bottom, 1, -1), (right, bottom, -1, -1)):
+        cv2.polylines(frame, [np.int32([(x + dx * length, y), (x, y),
+                                      (x, y + dy * length)])],
+                      False, color, thickness, cv2.LINE_AA)
 
 
 def face_sample(gray_frame, points):
@@ -112,6 +160,8 @@ def create_landmarkers(directory, stack):
             base_options=BaseOptions(model_asset_path=str(directory / MODELS[1])),
             running_mode=mode,
             num_hands=2,
+            min_hand_detection_confidence=0.40,
+            min_hand_presence_confidence=0.40,
         )))
     return face, hands
 
@@ -241,6 +291,7 @@ def run_camera(resolution, face, hands, speech, audio_stream, cable, tone):
         str(Path(cv2.data.haarcascades) / "haarcascade_profileface.xml"))
     next_profile_check = 0.0
     last_lips = None
+    last_eyes = None
     last_lips_at = 0.0
     cover_in_progress = False
     still_reference = None
@@ -276,24 +327,30 @@ def run_camera(resolution, face, hands, speech, audio_stream, cable, tone):
             ratio = None
             turned = False
             current_lips = None
+            eyes = None
             if len(faces) == 1:
                 points = pixel_points(faces[0], width, height)
                 ratio = mouth_ratio(points)
                 transforms = face_result.facial_transformation_matrixes
                 turned = head_turned(points, transforms[0] if transforms else None)
                 current_lips = [points[index] for index in LIP_OUTLINE]
+                eyes = (points[33], points[263])
 
             # Keep the last clear outline while the model is fitting landmarks to a hand.
             previous_lips = last_lips if cover_in_progress or now - last_lips_at <= 1.25 else None
+            if previous_lips is not None and eyes is not None and not turned:
+                previous_lips = project_mouth(previous_lips, last_eyes, eyes)
             overlap = len(faces) < 2 and any(
                 hand_overlaps_mouth(detected_hands, lips, width, height)
                 for lips in (current_lips, previous_lips) if lips is not None
             )
-            cover_in_progress = overlap
-            if current_lips is not None and not overlap:
-                last_lips = current_lips
-                last_lips_at = now
             covered = monitor.mouth_covered(now, overlap)
+            cover_in_progress = overlap or covered
+            if current_lips is not None and not cover_in_progress:
+                last_lips = current_lips
+                last_eyes = eyes
+                last_lips_at = now
+            overlap = cover_in_progress
             if current_lips is None or overlap or turned:
                 still_reference = None
                 monitor.observe_stillness(now, False)
@@ -332,6 +389,9 @@ def run_camera(resolution, face, hands, speech, audio_stream, cable, tone):
                     winsound.PlaySound(None, 0)
 
             color = RED if is_open or covered else GREEN
+            for face_landmarks in faces:
+                face_points = points if len(faces) == 1 else pixel_points(face_landmarks, width, height)
+                draw_face_corners(frame, face_points, bool(reasons))
             if len(faces) == 1:
                 outline = np.int32([points[index] for index in LIP_OUTLINE])
                 cv2.polylines(frame, [outline], True, color, max(2, width // 450), cv2.LINE_AA)

@@ -35,7 +35,7 @@ The station sounds a continuous **1 kHz television test tone** while an alarm is
 | Alarm | Trigger |
 | --- | --- |
 | **MOUTH OPEN** | The inner-lip aspect ratio reaches 0.30. The alarm clears below 0.22. The on-screen outline follows the outer lips. |
-| **MOUTH COVERED** | A tracked hand overlaps the center or most of the mouth for about 0.35 seconds. The station retains the last clear lip position during the obstruction. |
+| **MOUTH COVERED** | A tracked hand overlaps the mouth for about 0.24 seconds. The station follows the last clear lip position as your head moves and tolerates brief hand-tracking dropouts. |
 | **MIC: VOICE DETECTED** | The microphone detects speech activity, including individual letter sounds. No dictionary is used. |
 | **HEAD TURNED AWAY** | Head-turn evidence persists for about 0.65 seconds. A side-profile detector and a short grace period cover brief tracking gaps. |
 | **FACE NOT VISIBLE** | The station loses sight of the face for about one second. |
@@ -47,7 +47,7 @@ The station sounds a continuous **1 kHz television test tone** while an alarm is
 
 ## ORDER 03 · CONFIGURE THE STATION
 
-The console opens the default camera, tries camera modes up to 4K, and displays the resolution it receives. Face and hand tracking use a smaller copy capped at 960 pixels on the longest edge. The preview uses the newest full-resolution frame and preserves its proportions when the window is resized.
+The console opens the default camera, tries camera modes up to 4K, and displays the resolution it receives. Face and hand tracking use a smaller copy capped at 960 pixels on the longest edge. Four tracking corners mark each tracked face. The preview uses the newest full-resolution frame and preserves its proportions when the window is resized.
 
 | Launcher option | Purpose |
 | --- | --- |

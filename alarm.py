@@ -5,7 +5,8 @@ from math import atan2, degrees, dist
 
 OPEN_THRESHOLD = 0.30
 CLOSED_THRESHOLD = 0.22
-COVER_DELAY = 0.35
+COVER_DELAY = 0.24
+COVER_TRACKING_GRACE = 0.18
 STILL_SECONDS = 5
 TURN_TRACKING_GRACE = 1.5
 WARNING_DELAYS = {
@@ -49,6 +50,7 @@ def head_turned(points, transform=None):
 class Monitor:
     def __init__(self):
         self.cover_started = None
+        self.last_cover_at = None
         self.warning_since = {}
         self.still_since = None
         self.last_turn_at = None
@@ -88,6 +90,7 @@ class Monitor:
         if hand_over_mouth:
             if self.cover_started is None:
                 self.cover_started = now
-        else:
+            self.last_cover_at = now
+        elif self.last_cover_at is None or now - self.last_cover_at > COVER_TRACKING_GRACE:
             self.cover_started = None
-        return self.cover_started is not None and now - self.cover_started >= COVER_DELAY
+        return self.cover_started is not None and self.last_cover_at - self.cover_started >= COVER_DELAY
