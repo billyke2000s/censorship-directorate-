@@ -9,8 +9,8 @@ import cv2
 import mediapipe as mp
 import numpy as np
 
-from alarm import LIP_OUTLINE, OPEN_THRESHOLD, Monitor, head_turned, mouth_ratio
-from speech import SpeechState, microphone
+from alarm import LIP_OUTLINE, OPEN_THRESHOLD, Monitor, head_turned, mouth_open_alarm, mouth_ratio
+from speech import SPEECH_MODEL, SpeechState, microphone
 
 
 WINDOW = "Censorship System"
@@ -132,16 +132,54 @@ def render_console(frame, reasons, prompt, status, mic_status, reading, result):
     return screen
 
 
-def run_camera(camera_index, face, hands, speech, audio_stream, tone):
+def camera_resolution(value):
+    try:
+        width, height = (int(part) for part in value.lower().split("x"))
+        if width > 0 and height > 0:
+            return width, height
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError("Use WIDTHxHEIGHT, for example 3840x2160")
+
+
+def first_camera_frame(camera, requested):
+    default = (int(camera.get(cv2.CAP_PROP_FRAME_WIDTH)),
+               int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+    modes = ((requested, default) if requested else sorted(
+        ((3840, 2160), (2560, 1440), (1920, 1080), default),
+        key=lambda mode: mode[0] * mode[1], reverse=True))
+    best = None
+    for width, height in dict.fromkeys(modes):
+        if width > 0 and height > 0:
+            camera.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        ok, frame = camera.read()
+        if not ok:
+            continue
+        received = (frame.shape[1], frame.shape[0])
+        if received == (width, height) and (best is None or
+                                             received[0] * received[1] >= best[0]):
+            return frame
+        area = received[0] * received[1]
+        if best is None or area > best[0]:
+            best = (area, (width, height))
+    if best is not None:
+        width, height = best[1]
+        if width > 0 and height > 0:
+            camera.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        ok, frame = camera.read()
+        if ok:
+            return frame
+    raise RuntimeError("The webcam did not send frames at the requested or default resolution.")
+
+
+def run_camera(camera_index, resolution, face, hands, speech, audio_stream, tone):
     camera = cv2.VideoCapture(camera_index)
     if not camera.isOpened():
         camera.release()
         raise RuntimeError("Could not open webcam. Check Windows camera access or try --camera 1.")
 
-    original_width = camera.get(cv2.CAP_PROP_FRAME_WIDTH)
-    original_height = camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
-    camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
     monitor = Monitor()
     last_lips = None
     last_lips_at = 0.0
@@ -149,30 +187,26 @@ def run_camera(camera_index, face, hands, speech, audio_stream, tone):
     still_reference = None
     last_sample_at = 0.0
     open_since = None
+    is_open = False
     timestamp = -1
     started = monotonic()
     try:
-        ok, image = camera.read()
-        if not ok:
-            camera.set(cv2.CAP_PROP_FRAME_WIDTH, original_width)
-            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, original_height)
-            ok, image = camera.read()
+        image = first_camera_frame(camera, resolution)
+        ok = True
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
         while True:
             if audio_stream is not None and not audio_stream.active:
                 raise RuntimeError("The microphone stopped. Reconnect it and restart.")
+            if speech.error is not None:
+                raise RuntimeError(f"Speech recognition stopped: {speech.error}")
             if not ok:
                 raise RuntimeError("The webcam stopped sending frames.")
             frame = cv2.flip(image, 1)
             height, width = frame.shape[:2]
-            tracking_scale = min(1, 1280 / max(width, height))
-            tracking_frame = frame if tracking_scale == 1 else cv2.resize(
-                frame, (round(width * tracking_scale), round(height * tracking_scale)),
-                interpolation=cv2.INTER_AREA)
             now = monotonic()
             timestamp = max(timestamp + 1, int((now - started) * 1000))
             sample = mp.Image(image_format=mp.ImageFormat.SRGB,
-                              data=cv2.cvtColor(tracking_frame, cv2.COLOR_BGR2RGB))
+                              data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             faces = face.detect_for_video(sample, timestamp).face_landmarks
             detected_hands = hands.detect_for_video(sample, timestamp).hand_landmarks
             ratio = None
@@ -206,7 +240,7 @@ def run_camera(camera_index, face, hands, speech, audio_stream, tone):
                 if not stable:
                     still_reference = sample
                 monitor.observe_stillness(now, stable)
-            is_open = ratio is not None and ratio >= OPEN_THRESHOLD
+            is_open = mouth_open_alarm(ratio, overlap, is_open)
             if is_open and not overlap and not monitor.steps and monitor.result is None:
                 if open_since is None:
                     open_since = now
@@ -219,8 +253,10 @@ def run_camera(camera_index, face, hands, speech, audio_stream, tone):
             reasons = monitor.camera_warnings(now, len(faces), turned)
             if covered:
                 reasons.append("MOUTH COVERED")
+            if is_open:
+                reasons.append("MOUTH OPEN")
             if speaking:
-                reasons.append("MIC: SPEECH DETECTED")
+                reasons.append("MIC: WORD DETECTED")
             if monitor.failed:
                 reasons.append("CHEATING? STATIC FACE" if monitor.still_check
                                else "CHEATING? CHECK FAILED")
@@ -246,7 +282,7 @@ def run_camera(camera_index, face, hands, speech, audio_stream, tone):
             if monitor.steps:
                 pose = "Open" if monitor.steps[0] == "open" else "Close"
                 prompt = f"{pose} mouth and hold  {max(0, monitor.deadline - now):.0f}s"
-            mic_status = "Mic disabled" if audio_stream is None else "Mic: voice detection on"
+            mic_status = "Mic disabled" if audio_stream is None else "Mic: English recognition"
             cv2.imshow(WINDOW, render_console(frame, reasons, prompt, status, mic_status,
                                                reading, monitor.result))
             key = cv2.waitKey(1) & 0xFF
@@ -257,6 +293,7 @@ def run_camera(camera_index, face, hands, speech, audio_stream, tone):
             if key in (ord("r"), ord("R")):
                 monitor = Monitor()
                 open_since = None
+                is_open = False
                 still_reference = None
             ok, image = camera.read()
     finally:
@@ -271,6 +308,8 @@ def main():
 
     parser = argparse.ArgumentParser(description="Webcam mouth alarm for Windows")
     parser.add_argument("--camera", type=int, default=0)
+    parser.add_argument("--resolution", type=camera_resolution,
+                        help="Request WIDTHxHEIGHT; defaults to trying up to 3840x2160")
     parser.add_argument("--mic", type=int, help="Use this microphone device index")
     parser.add_argument("--no-mic", action="store_true", help="Run webcam checks only")
     parser.add_argument("--models", type=Path, default=Path.cwd() / "models")
@@ -290,14 +329,14 @@ def main():
                 stream = None
                 if not args.no_mic:
                     try:
-                        stream = microphone(args.mic, speech)
+                        stream = stack.enter_context(
+                            microphone(args.mic, speech, args.models / SPEECH_MODEL))
                     except (RuntimeError, OSError, ValueError, ImportError) as error:
                         raise RuntimeError(f"{error}. Check Windows microphone access or use --no-mic.") from error
-                    stack.callback(stream.close)
                 temp_dir = stack.enter_context(TemporaryDirectory(prefix="mouth-alarm-"))
                 tone = Path(temp_dir) / "alarm.wav"
                 write_tv_tone(tone)
-                run_camera(args.camera, face, hands, speech, stream, tone)
+                run_camera(args.camera, args.resolution, face, hands, speech, stream, tone)
     except (RuntimeError, OSError, ValueError) as error:
         parser.exit(1, f"Mouth Alarm: {error}\n")
 

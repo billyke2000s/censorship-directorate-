@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from speech import SpeechState, has_voice_energy, remove_alarm_tone
+from speech import SpeechState, remove_alarm_tone
 
 
 class SpeechStateTests(unittest.TestCase):
@@ -15,34 +15,25 @@ class SpeechStateTests(unittest.TestCase):
         filtered = np.frombuffer(remove_alarm_tone(mixed.tobytes(), rate), dtype="<i2")
         np.testing.assert_allclose(filtered, voice, atol=2)
 
-    def test_one_voice_frame_does_not_trigger_alarm(self):
+    def test_no_recognized_words_does_not_trigger_alarm(self):
         state = SpeechState()
-        state.update(1.0, True)
-        state.update(1.02, False)
+        state.update(1.0, "")
+        state.update(1.02, "[noise]")
         self.assertFalse(state.active(1.02))
 
-    def test_sustained_voice_triggers_then_expires(self):
+    def test_new_words_trigger_and_repeated_result_does_not_extend_alarm(self):
         state = SpeechState()
-        for index in range(7):
-            state.update(1 + index * 0.02, True)
-        self.assertFalse(state.active(1.12))
-        state.update(1.14, True)
-        self.assertTrue(state.active(1.14))
-        self.assertFalse(state.active(1.50))
+        state.update(1, "hello")
+        self.assertTrue(state.active(1))
+        state.update(1.4, "hello")
+        state.update(1.5, "hello", final=True)
+        self.assertFalse(state.active(1.7))
+        state.update(1.8, "don't", final=True)
+        self.assertTrue(state.active(1.8))
 
-    def test_energy_gate_rejects_quiet_frames_and_steady_tones(self):
-        rate = 16000
-        time = np.arange(320) / rate
-        tone = 8000 * np.sin(2 * np.pi * 1000 * time)
-        voice_like = sum(1200 * np.sin(2 * np.pi * hz * time)
-                         for hz in (250, 500, 750, 1250))
-        for signal, expected in ((tone, False), (voice_like / 100, False), (voice_like, True)):
-            self.assertEqual(has_voice_energy(signal.astype("<i2").tobytes(), rate), expected)
-
-    def test_suppresses_frames_during_the_beep(self):
+    def test_additional_recognized_word_extends_alarm(self):
         state = SpeechState()
-        state.muted_until = 2.0
-        for now in (1.0, 1.02, 1.04):
-            state.update(now, True)
-        self.assertFalse(state.active(1.04))
-        self.assertEqual(len(state.recent), 0)
+        state.update(1, "hello")
+        state.update(1.5, "hello there")
+        self.assertTrue(state.active(1.8))
+        self.assertFalse(state.active(2.2))

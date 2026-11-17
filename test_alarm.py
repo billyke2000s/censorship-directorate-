@@ -1,9 +1,17 @@
 import unittest
 
-from alarm import Monitor, head_turned, mouth_ratio
+from alarm import Monitor, head_turned, mouth_open_alarm, mouth_ratio
 
 
 class MonitorTests(unittest.TestCase):
+    def test_open_mouth_alarm_holds_until_closed_or_occluded(self):
+        self.assertTrue(mouth_open_alarm(0.30, False, False))
+        self.assertFalse(mouth_open_alarm(0.25, False, False))
+        self.assertTrue(mouth_open_alarm(0.25, False, True))
+        self.assertFalse(mouth_open_alarm(0.21, False, True))
+        self.assertFalse(mouth_open_alarm(0.40, True, True))
+        self.assertFalse(mouth_open_alarm(None, False, True))
+
     def test_still_face_prompts_then_flags_failed_check(self):
         monitor = Monitor()
         monitor.observe_stillness(0, True)

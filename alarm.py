@@ -28,6 +28,11 @@ def mouth_ratio(points):
     return sum(dist(points[top], points[bottom]) for top, bottom in gaps) / (3 * width)
 
 
+def mouth_open_alarm(ratio, hand_over_mouth, was_open):
+    threshold = CLOSED_THRESHOLD if was_open else OPEN_THRESHOLD
+    return not hand_over_mouth and ratio is not None and ratio >= threshold
+
+
 def head_turned(points):
     left, right, nose = points[33], points[263], points[1]
     eye_x, eye_y = right[0] - left[0], right[1] - left[1]

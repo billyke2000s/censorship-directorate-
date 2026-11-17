@@ -28,6 +28,15 @@ call :model face_landmarker
 if errorlevel 1 goto failed
 call :model hand_landmarker
 if errorlevel 1 goto failed
+set "speech_model=vosk-model-small-en-us-0.15"
+if not exist "models\%speech_model%\am\final.mdl" (
+    echo Downloading the offline English speech model...
+    curl.exe --fail --location --retry 2 --output "models\%speech_model%.zip" "https://alphacephei.com/vosk/models/%speech_model%.zip"
+    if errorlevel 1 goto failed
+    tar.exe -xf "models\%speech_model%.zip" -C "models"
+    if errorlevel 1 goto failed
+    del "models\%speech_model%.zip"
+)
 ".venv\Scripts\python.exe" main.py %*
 if errorlevel 1 goto failed
 exit /b 0

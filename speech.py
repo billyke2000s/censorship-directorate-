@@ -1,6 +1,9 @@
 """Classify microphone frames locally without saving or transcribing them."""
 
-from collections import deque
+import json
+from contextlib import contextmanager
+from queue import Empty, Full, Queue
+from threading import Event, Thread
 from time import monotonic
 import numpy as np
 
@@ -14,77 +17,100 @@ def remove_alarm_tone(data, rate):
     return np.clip(np.rint(cleaned), -32768, 32767).astype("<i2").tobytes()
 
 
-def has_voice_energy(data, rate):
-    """Reject very quiet frames and narrow tones before accepting a VAD vote."""
-    samples = np.frombuffer(data, dtype="<i2").astype(np.float32)
-    samples -= samples.mean()
-    if np.mean(samples * samples) < 45 ** 2:
-        return False
-    power = np.abs(np.fft.rfft(samples * np.hanning(len(samples)))) ** 2
-    frequencies = np.fft.rfftfreq(len(samples), 1 / rate)
-    voice_band = power[(frequencies >= 150) & (frequencies <= 3500)]
-    in_band = voice_band.sum()
-    if in_band < 0.40 * power.sum():
-        return False
-    # A steady whistle or electronic beep concentrates energy in adjacent bins.
-    strongest = np.convolve(voice_band, np.ones(3), mode="valid").max()
-    return strongest < 0.85 * in_band
+SPEECH_MODEL = "vosk-model-small-en-us-0.15"
 
 
 class SpeechState:
     def __init__(self):
-        self.recent = deque(maxlen=13)
         self.active_until = 0.0
         self.muted_until = 0.0
         self.alarm_playing = False
+        self.partial = ()
+        self.error = None
 
-    def update(self, now, voiced):
-        if now < self.muted_until:
-            return
-        self.recent.append(voiced)
-        votes_needed = 4 if self.active(now) else 8
-        if voiced and sum(self.recent) >= votes_needed:
-            self.active_until = now + 0.30
+    def update(self, now, text, final=False):
+        words = tuple(word for word in text.split() if word.replace("'", "").isalpha())
+        if len(words) > len(self.partial):
+            self.active_until = now + 0.65
+        if final:
+            self.partial = ()
+        elif len(words) > len(self.partial):
+            self.partial = words
 
     def active(self, now):
         return now < self.active_until
 
 
-def microphone(device, state):
+@contextmanager
+def microphone(device, state, model_path):
     import sounddevice as sd
-    import webrtcvad
+    from vosk import KaldiRecognizer, Model, SetLogLevel
+
+    if not (model_path / "am" / "final.mdl").is_file():
+        raise RuntimeError("Missing English speech model. Run Start-MouthAlarm.cmd")
+    SetLogLevel(-1)
+    model = Model(str(model_path))
 
     try:
         settings = sd.query_devices(device, "input")
     except sd.PortAudioError as error:
         raise RuntimeError(f"Could not find microphone: {error}") from error
-    supported_rates = (16000, 48000, 32000, 8000)
+    supported_rates = (16000, 48000, 44100, 32000)
     preferred = int(settings["default_samplerate"])
     rates = tuple(dict.fromkeys(
         ((preferred,) if preferred in supported_rates else ()) + supported_rates
     ))
+    pending = Queue(maxsize=8)
+    stopped = Event()
+
+    def callback(data, _frames, _time, status):
+        if not status:
+            try:
+                pending.put_nowait((monotonic(), bytes(data)))
+            except Full:
+                pass
+
     last_error = None
     for rate in rates:
-        detector = webrtcvad.Vad(3)
-        frame_size = rate // 50
-
-        def callback(data, frames, _time, status):
-            now = monotonic()
-            if not status and frames == frame_size and now >= state.muted_until:
-                pcm = bytes(data)
-                if state.alarm_playing:
-                    pcm = remove_alarm_tone(pcm, rate)
-                state.update(now, detector.is_speech(pcm, rate) and has_voice_energy(pcm, rate))
-
         stream = None
         try:
             stream = sd.RawInputStream(device=device, channels=1, samplerate=rate,
-                                       dtype="int16", blocksize=frame_size,
+                                       dtype="int16", blocksize=rate // 10,
                                        callback=callback)
             stream.start()
-            return stream
+            break
         except sd.PortAudioError as error:
             if stream is not None:
                 stream.close()
             last_error = error
-    raise RuntimeError(f"Could not start microphone: {last_error}")
+    else:
+        raise RuntimeError(f"Could not start microphone: {last_error}")
+
+    def recognize():
+        try:
+            recognizer = KaldiRecognizer(model, rate)
+            while not stopped.is_set():
+                try:
+                    captured, pcm = pending.get(timeout=0.1)
+                except Empty:
+                    continue
+                if captured < state.muted_until:
+                    pcm = bytes(len(pcm))
+                elif state.alarm_playing:
+                    pcm = remove_alarm_tone(pcm, rate)
+                final = recognizer.AcceptWaveform(pcm)
+                result = recognizer.Result() if final else recognizer.PartialResult()
+                key = "text" if final else "partial"
+                state.update(monotonic(), json.loads(result).get(key, ""), final)
+        except Exception as error:
+            state.error = str(error)
+
+    worker = Thread(target=recognize, daemon=True)
+    try:
+        worker.start()
+        yield stream
+    finally:
+        stopped.set()
+        stream.close()
+        if worker.ident is not None:
+            worker.join()
