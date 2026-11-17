@@ -8,6 +8,7 @@ CLOSED_THRESHOLD = 0.22
 COVER_DELAY = 0.35
 STILL_SECONDS = 5
 WARNING_DELAYS = {
+    "CAMERA LIKELY COVERED": 0.6,
     "FACE NOT VISIBLE": 1.0,
     "MULTIPLE FACES": 1.0,
     "HEAD TURNED AWAY": 2.0,
@@ -53,9 +54,10 @@ class Monitor:
         if self.still_since is None:
             self.still_since = now
 
-    def camera_warnings(self, now, face_count, turned):
+    def camera_warnings(self, now, face_count, turned, lens_obscured=False):
         observed = {
-            "FACE NOT VISIBLE": face_count == 0,
+            "CAMERA LIKELY COVERED": lens_obscured and face_count == 0,
+            "FACE NOT VISIBLE": face_count == 0 and not lens_obscured,
             "MULTIPLE FACES": face_count > 1,
             "HEAD TURNED AWAY": face_count == 1 and turned,
         }

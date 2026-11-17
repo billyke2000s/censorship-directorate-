@@ -6,6 +6,7 @@ A local Windows demo inspired by [Raul Engineer's Short](https://www.youtube.com
 - The app beeps when a tracked hand overlaps the center or most of the mouth for roughly a third of a second. It keeps the last clear lip position while the hand obscures the face.
 - The microphone uses offline Vosk English recognition. The panel shows **MIC: WORD DETECTED** when the recognizer returns a new word. Recognition can miss words or mistake other sounds for speech, and the tone plays locally through Windows audio.
 - The console plays a continuous 1 kHz TV-style tone while an alarm is active and lists the reasons beside the live view. It flags a missing face or multiple faces after one second and a sustained sideways head turn after two seconds.
+- **CAMERA LIKELY COVERED** sounds after roughly 0.6 seconds when no face is visible and the frame is very dark or nearly featureless. A dark room or plain wall can also trigger it.
 - The app tries common camera modes up to 4K, processes the full received frame, and shows the actual capture resolution. The preview scales to the window without stretching. To request another mode, run `Start-MouthAlarm.cmd --resolution WIDTHxHEIGHT` from a terminal.
 - A tracked face that stays nearly still for five seconds raises **FACE IMAGE STILL**. The warning clears when movement resumes.
 - Press **R** to reset detection. Press **Esc** to quit.

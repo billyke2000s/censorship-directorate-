@@ -71,6 +71,19 @@ def face_sample(gray_frame, points):
     return cv2.resize(crop, (48, 48), interpolation=cv2.INTER_AREA)
 
 
+def lens_likely_covered(frame):
+    preview = cv2.resize(frame, (96, 54), interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(preview, cv2.COLOR_BGR2GRAY)
+    # Ignore dark borders and small bright spots around the edge of a cover.
+    center = gray[5:-5, 9:-9].astype(np.float32)
+    low, high = np.percentile(center, (5, 95))
+    if high <= 24:
+        return True
+    texture = (np.abs(np.diff(center, axis=0)).mean() +
+               np.abs(np.diff(center, axis=1)).mean()) / 2
+    return high - low <= 13 and texture <= 1.6
+
+
 def create_landmarkers(directory, stack):
     from mediapipe.tasks.python import BaseOptions, vision
 
@@ -237,7 +250,8 @@ def run_camera(camera_index, resolution, face, hands, speech, audio_stream, cabl
                 monitor.observe_stillness(now, stable)
             is_open = mouth_open_alarm(ratio, overlap, is_open)
             speaking = speech.active(now)
-            reasons = monitor.camera_warnings(now, len(faces), turned)
+            lens_obscured = not faces and lens_likely_covered(frame)
+            reasons = monitor.camera_warnings(now, len(faces), turned, lens_obscured)
             if covered:
                 reasons.append("MOUTH COVERED")
             if is_open:

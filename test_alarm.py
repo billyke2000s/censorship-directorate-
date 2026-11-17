@@ -4,6 +4,14 @@ from alarm import Monitor, head_turned, mouth_open_alarm, mouth_ratio
 
 
 class MonitorTests(unittest.TestCase):
+    def test_camera_cover_is_debounced_and_clears_on_uncover(self):
+        monitor = Monitor()
+        self.assertEqual(monitor.camera_warnings(0, 0, False, True), [])
+        self.assertEqual(monitor.camera_warnings(0.6, 0, False, True), ["CAMERA LIKELY COVERED"])
+        self.assertEqual(monitor.camera_warnings(0.7, 0, False), [])
+        self.assertEqual(monitor.camera_warnings(1.8, 0, False), ["FACE NOT VISIBLE"])
+        self.assertEqual(monitor.camera_warnings(2, 1, False, True), [])
+
     def test_open_mouth_alarm_holds_until_closed_or_occluded(self):
         self.assertTrue(mouth_open_alarm(0.30, False, False))
         self.assertFalse(mouth_open_alarm(0.25, False, False))
