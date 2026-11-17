@@ -12,23 +12,22 @@ class MonitorTests(unittest.TestCase):
         self.assertFalse(mouth_open_alarm(0.40, True, True))
         self.assertFalse(mouth_open_alarm(None, False, True))
 
-    def test_still_face_prompts_then_flags_failed_check(self):
+    def test_still_face_raises_passive_warning_then_clears(self):
         monitor = Monitor()
         monitor.observe_stillness(0, True)
         monitor.observe_stillness(4.9, True)
-        self.assertFalse(monitor.steps)
+        self.assertEqual(monitor.camera_warnings(4.9, 1, False), [])
         monitor.observe_stillness(5, True)
-        self.assertTrue(monitor.steps)
-        self.assertTrue(monitor.still_check)
-        monitor.update(20, 0.1, False)
-        self.assertTrue(monitor.failed)
+        self.assertEqual(monitor.camera_warnings(5, 1, False), ["FACE IMAGE STILL"])
+        monitor.observe_stillness(6, False)
+        self.assertEqual(monitor.camera_warnings(6, 1, False), [])
 
     def test_motion_interrupts_still_face_timer(self):
         monitor = Monitor()
         monitor.observe_stillness(0, True)
         monitor.observe_stillness(4, False)
         monitor.observe_stillness(5, True)
-        self.assertFalse(monitor.steps)
+        self.assertEqual(monitor.camera_warnings(5, 1, False), [])
 
     def test_visibility_warnings_wait_and_clear(self):
         monitor = Monitor()
@@ -59,30 +58,7 @@ class MonitorTests(unittest.TestCase):
 
     def test_cover_is_debounced_and_clears(self):
         monitor = Monitor()
-        self.assertFalse(monitor.update(1, 0.1, True))
-        self.assertFalse(monitor.update(1.1, 0.1, True))
-        self.assertTrue(monitor.update(1.4, None, True))
-        self.assertFalse(monitor.update(1.5, None, False))
-
-    def test_static_mouth_times_out(self):
-        monitor = Monitor()
-        monitor.challenge(0, first="open")
-        for second in range(16):
-            monitor.update(second, 0.40, False)
-        self.assertIn("CHEATING?", monitor.result)
-
-    def test_completing_all_poses(self):
-        monitor = Monitor()
-        monitor.challenge(0, first="closed")
-        for second, ratio in enumerate((0.12, 0.40, 0.12)):
-            monitor.update(second, ratio, False)
-            monitor.update(second + 0.5, ratio, False)
-        self.assertEqual(monitor.result, "Mouth movement verified")
-
-    def test_covered_pose_does_not_count(self):
-        monitor = Monitor()
-        monitor.challenge(0, first="open")
-        monitor.update(0, 0.40, False)
-        monitor.update(0.5, 0.40, True)
-        monitor.update(1, 0.40, False)
-        self.assertEqual(monitor.steps, ["open", "closed", "open"])
+        self.assertFalse(monitor.mouth_covered(1, True))
+        self.assertFalse(monitor.mouth_covered(1.1, True))
+        self.assertTrue(monitor.mouth_covered(1.4, True))
+        self.assertFalse(monitor.mouth_covered(1.5, False))

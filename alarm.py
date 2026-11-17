@@ -1,14 +1,11 @@
 """Decision logic independent of the camera and graphical interface."""
 
 from math import dist
-from secrets import choice
 
 
 OPEN_THRESHOLD = 0.30
 CLOSED_THRESHOLD = 0.22
 COVER_DELAY = 0.35
-POSE_SECONDS = 0.45
-CHALLENGE_SECONDS = 15
 STILL_SECONDS = 5
 WARNING_DELAYS = {
     "FACE NOT VISIBLE": 1.0,
@@ -46,14 +43,8 @@ def head_turned(points):
 class Monitor:
     def __init__(self):
         self.cover_started = None
-        self.steps = []
-        self.deadline = None
-        self.held_since = None
-        self.result = None
         self.warning_since = {}
         self.still_since = None
-        self.still_check = False
-        self.still_retry_at = 0.0
 
     def observe_stillness(self, now, stable):
         if not stable:
@@ -61,9 +52,6 @@ class Monitor:
             return
         if self.still_since is None:
             self.still_since = now
-        elif (now - self.still_since >= STILL_SECONDS and now >= self.still_retry_at and
-              not self.steps and not self.failed):
-            self.challenge(now, still_check=True)
 
     def camera_warnings(self, now, face_count, turned):
         observed = {
@@ -79,47 +67,14 @@ class Monitor:
                     active.append(name)
             else:
                 self.warning_since.pop(name, None)
+        if self.still_since is not None and now - self.still_since >= STILL_SECONDS:
+            active.append("FACE IMAGE STILL")
         return active
 
-    @property
-    def failed(self):
-        return self.result is not None and self.result.startswith("CHEATING")
-
-    def challenge(self, now, first=None, *, still_check=False):
-        first = first or choice(("open", "closed"))
-        second = "closed" if first == "open" else "open"
-        self.steps = [first, second, first]
-        self.deadline = now + CHALLENGE_SECONDS
-        self.held_since = None
-        self.result = None
-        self.still_check = still_check
-
-    def update(self, now, ratio, hand_over_mouth):
+    def mouth_covered(self, now, hand_over_mouth):
         if hand_over_mouth:
             if self.cover_started is None:
                 self.cover_started = now
         else:
             self.cover_started = None
-        covered = self.cover_started is not None and now - self.cover_started >= COVER_DELAY
-
-        if self.steps:
-            expected = self.steps[0]
-            if now >= self.deadline:
-                self.steps.clear()
-                self.result = "CHEATING? | Mouth movement not verified"
-            elif hand_over_mouth or ratio is None:
-                self.held_since = None
-            elif (expected == "open" and ratio >= OPEN_THRESHOLD or
-                  expected == "closed" and ratio <= CLOSED_THRESHOLD):
-                if self.held_since is None:
-                    self.held_since = now
-                elif now - self.held_since >= POSE_SECONDS:
-                    self.steps.pop(0)
-                    self.held_since = None
-                    if not self.steps:
-                        self.result = "Mouth movement verified"
-                        self.still_retry_at = now + 30
-            else:
-                self.held_since = None
-
-        return covered
+        return self.cover_started is not None and now - self.cover_started >= COVER_DELAY

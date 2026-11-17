@@ -95,7 +95,7 @@ def draw_label(frame, label, y, color=(240, 240, 240), size=0.60, x=16):
                 cv2.LINE_AA)
 
 
-def render_console(frame, reasons, prompt, status, mic_status, reading, result):
+def render_console(frame, reasons, status, mic_status, reading):
     screen = np.full((745, 1190, 3), PANEL, dtype=np.uint8)
     height, width = frame.shape[:2]
     scale = min(880 / width, 600 / height)
@@ -108,7 +108,6 @@ def render_console(frame, reasons, prompt, status, mic_status, reading, result):
     cv2.rectangle(screen, (0, 0), (1189, 54), (26, 27, 156), -1)
     cv2.rectangle(screen, (912, 72), (1174, 672), (27, 27, 34), -1)
     cv2.rectangle(screen, (912, 72), (1174, 125), RED if reasons else PAPER, -1)
-    color = RED if reasons else PAPER
     draw_label(screen, "CENSORSHIP DIRECTORATE", 38, PAPER, 1.02)
     draw_label(screen, "LIVE SURVEILLANCE", 36, PAPER, 0.55, 984)
     draw_label(screen, "ALARM ACTIVE" if reasons else "UNDER OBSERVATION",
@@ -117,18 +116,13 @@ def render_console(frame, reasons, prompt, status, mic_status, reading, result):
         y = 151 + index * 28
         cv2.rectangle(screen, (928, y - 8), (934, y - 2), RED, -1)
         draw_label(screen, reason, y, RED, 0.53, 943)
-    if prompt:
-        draw_label(screen, prompt, 342, (125, 218, 255), 0.49, 928)
-    elif result:
-        draw_label(screen, "MOUTH CHECK PASSED" if not result.startswith("CHEATING")
-                   else "MOVEMENT NOT VERIFIED", 342, color, 0.52, 928)
     cv2.line(screen, (928, 381), (1158, 381), (77, 75, 88), 1)
     draw_label(screen, status, 411, PAPER, 0.56, 928)
     draw_label(screen, f"MAR {reading}  /  {OPEN_THRESHOLD:.2f}", 448, size=0.54, x=928)
     draw_label(screen, mic_status, 482, size=0.54, x=928)
     draw_label(screen, f"Camera {width} x {height}", 516, size=0.54, x=928)
     cv2.line(screen, (16, 688), (1174, 688), (26, 27, 156), 2)
-    draw_label(screen, "L  Verify movement     R  Reset     Esc  Exit", 719, PAPER)
+    draw_label(screen, "R  Reset     Esc  Exit", 719, PAPER)
     return screen
 
 
@@ -174,7 +168,7 @@ def first_camera_frame(camera, requested):
     raise RuntimeError("The webcam did not send frames at the requested or default resolution.")
 
 
-def run_camera(camera_index, resolution, face, hands, speech, audio_stream, tone):
+def run_camera(camera_index, resolution, face, hands, speech, audio_stream, cable, tone):
     camera = cv2.VideoCapture(camera_index)
     if not camera.isOpened():
         camera.release()
@@ -186,7 +180,6 @@ def run_camera(camera_index, resolution, face, hands, speech, audio_stream, tone
     cover_in_progress = False
     still_reference = None
     last_sample_at = 0.0
-    open_since = None
     is_open = False
     timestamp = -1
     started = monotonic()
@@ -197,6 +190,8 @@ def run_camera(camera_index, resolution, face, hands, speech, audio_stream, tone
         while True:
             if audio_stream is not None and not audio_stream.active:
                 raise RuntimeError("The microphone stopped. Reconnect it and restart.")
+            if cable is not None and not cable.active:
+                raise RuntimeError("The virtual cable stopped. Restart the app.")
             if speech.error is not None:
                 raise RuntimeError(f"Speech recognition stopped: {speech.error}")
             if not ok:
@@ -228,7 +223,7 @@ def run_camera(camera_index, resolution, face, hands, speech, audio_stream, tone
             if current_lips is not None and not overlap:
                 last_lips = current_lips
                 last_lips_at = now
-            covered = monitor.update(now, ratio, overlap)
+            covered = monitor.mouth_covered(now, overlap)
             if current_lips is None or overlap or turned:
                 still_reference = None
                 monitor.observe_stillness(now, False)
@@ -241,26 +236,17 @@ def run_camera(camera_index, resolution, face, hands, speech, audio_stream, tone
                     still_reference = sample
                 monitor.observe_stillness(now, stable)
             is_open = mouth_open_alarm(ratio, overlap, is_open)
-            if is_open and not overlap and not monitor.steps and monitor.result is None:
-                if open_since is None:
-                    open_since = now
-                elif now - open_since >= 3:
-                    monitor.challenge(now)
-                    open_since = None
-            else:
-                open_since = None
             speaking = speech.active(now)
             reasons = monitor.camera_warnings(now, len(faces), turned)
             if covered:
                 reasons.append("MOUTH COVERED")
             if is_open:
                 reasons.append("MOUTH OPEN")
+            speech.camera_alarm = bool(reasons)
+            speech.camera_checked_at = monotonic()
             if speaking:
                 reasons.append("MIC: WORD DETECTED")
-            if monitor.failed:
-                reasons.append("CHEATING? STATIC FACE" if monitor.still_check
-                               else "CHEATING? CHECK FAILED")
-            if bool(reasons) != speech.alarm_playing:
+            if cable is None and bool(reasons) != speech.alarm_playing:
                 speech.muted_until = now + 0.10
                 speech.alarm_playing = bool(reasons)
                 if reasons:
@@ -275,28 +261,21 @@ def run_camera(camera_index, resolution, face, hands, speech, audio_stream, tone
                 cv2.polylines(frame, [outline], True, color, max(2, width // 450), cv2.LINE_AA)
             status = "Mouth open" if is_open else (
                 "Mouth closed" if ratio is not None else f"Faces tracked: {len(faces)}")
-            if monitor.steps and monitor.still_check:
-                status = "Still face: checking movement"
             reading = "--" if ratio is None else f"{ratio:.2f}"
-            prompt = None
-            if monitor.steps:
-                pose = "Open" if monitor.steps[0] == "open" else "Close"
-                prompt = f"{pose} mouth and hold  {max(0, monitor.deadline - now):.0f}s"
             mic_status = "Mic disabled" if audio_stream is None else "Mic: English recognition"
-            cv2.imshow(WINDOW, render_console(frame, reasons, prompt, status, mic_status,
-                                               reading, monitor.result))
+            if cable is not None:
+                mic_status = "Virtual mic -> CABLE Output"
+            cv2.imshow(WINDOW, render_console(frame, reasons, status, mic_status, reading))
             key = cv2.waitKey(1) & 0xFF
             if key == 27 or cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
                 break
-            if key in (ord("l"), ord("L")):
-                monitor.challenge(now)
             if key in (ord("r"), ord("R")):
                 monitor = Monitor()
-                open_since = None
                 is_open = False
                 still_reference = None
             ok, image = camera.read()
     finally:
+        speech.camera_checked_at = 0.0
         if speech.alarm_playing:
             winsound.PlaySound(None, 0)
         camera.release()
@@ -312,10 +291,16 @@ def main():
                         help="Request WIDTHxHEIGHT; defaults to trying up to 3840x2160")
     parser.add_argument("--mic", type=int, help="Use this microphone device index")
     parser.add_argument("--no-mic", action="store_true", help="Run webcam checks only")
+    parser.add_argument("--virtual-mic", action="store_true", help="Send filtered audio to VB-CABLE")
+    parser.add_argument("--cable-device", type=int, help="Override the virtual cable output device index")
     parser.add_argument("--models", type=Path, default=Path.cwd() / "models")
     parser.add_argument("--check-models", action="store_true",
                         help="Load both models without opening the camera")
     args = parser.parse_args()
+    if args.virtual_mic and args.no_mic:
+        parser.error("--virtual-mic requires an input microphone")
+    if args.cable_device is not None and not args.virtual_mic:
+        parser.error("--cable-device requires --virtual-mic")
     try:
         missing = [name for name in MODELS if not (args.models / name).is_file()]
         if missing:
@@ -326,17 +311,18 @@ def main():
                 print("Face and hand landmark models loaded.")
             else:
                 speech = SpeechState()
-                stream = None
+                stream = cable = None
                 if not args.no_mic:
                     try:
-                        stream = stack.enter_context(
-                            microphone(args.mic, speech, args.models / SPEECH_MODEL))
+                        stream, cable = stack.enter_context(microphone(
+                            args.mic, speech, args.models / SPEECH_MODEL,
+                            virtual_mic=args.virtual_mic, cable_device=args.cable_device))
                     except (RuntimeError, OSError, ValueError, ImportError) as error:
                         raise RuntimeError(f"{error}. Check Windows microphone access or use --no-mic.") from error
                 temp_dir = stack.enter_context(TemporaryDirectory(prefix="mouth-alarm-"))
                 tone = Path(temp_dir) / "alarm.wav"
                 write_tv_tone(tone)
-                run_camera(args.camera, args.resolution, face, hands, speech, stream, tone)
+                run_camera(args.camera, args.resolution, face, hands, speech, stream, cable, tone)
     except (RuntimeError, OSError, ValueError) as error:
         parser.exit(1, f"Mouth Alarm: {error}\n")
 

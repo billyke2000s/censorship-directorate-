@@ -7,11 +7,10 @@ A local Windows demo inspired by [Raul Engineer's Short](https://www.youtube.com
 - The microphone uses offline Vosk English recognition. The panel shows **MIC: WORD DETECTED** when the recognizer returns a new word. Recognition can miss words or mistake other sounds for speech, and the tone plays locally through Windows audio.
 - The console plays a continuous 1 kHz TV-style tone while an alarm is active and lists the reasons beside the live view. It flags a missing face or multiple faces after one second and a sustained sideways head turn after two seconds.
 - The app tries common camera modes up to 4K, processes the full received frame, and shows the actual capture resolution. The preview scales to the window without stretching. To request another mode, run `Start-MouthAlarm.cmd --resolution WIDTHxHEIGHT` from a terminal.
-- Holding an open-mouth pose for three seconds starts a movement check. You can also press **L**. Follow the open and closed prompts, holding each pose briefly. If the sequence times out, the alarm panel shows **CHEATING? CHECK FAILED** and sounds the tone.
-- If a tracked face stays nearly still for five seconds, the app prompts for live mouth movement. If that check times out, the alarm panel shows **CHEATING? STATIC FACE**.
-- Press **R** to clear the result and rearm the automatic check. Press **Esc** to quit.
+- A tracked face that stays nearly still for five seconds raises **FACE IMAGE STILL**. The warning clears when movement resumes.
+- Press **R** to reset detection. Press **Esc** to quit.
 
-The movement check can flag a static fake mouth if its shape triggers the check or you start it manually. Camera angle, tracking loss, lighting, and slow responses can also cause a timeout. A missing face can mean someone stepped away, covered the lens, or moved into poor lighting. A head turn is estimated from facial landmarks. These camera checks do not establish intent or reliably identify all props, moving overlays, or prerecorded inputs.
+A missing face can mean someone stepped away, covered the lens, or moved into poor lighting. A head turn is estimated from facial landmarks. Sitting very still can trip the still-image warning. These camera checks do not establish intent or reliably identify all props, moving overlays, or prerecorded inputs.
 
 ## Quick start
 
@@ -29,6 +28,14 @@ powershell -NoProfile -File .\setup-models.ps1
 ```
 
 If you already set up an earlier version, rerun the dependency install command to add the speech detector. If the wrong camera opens, add `--camera 1`. Use `--mic INDEX` to select an input listed by `python -m sounddevice`, or `--no-mic` for webcam-only mode. Run with `--check-models` to check the models without opening the webcam.
+
+## Use on a call
+
+1. Install [VB-CABLE from VB-Audio](https://vb-audio.com/Cable/) and restart Windows as directed by its installer.
+2. Double-click **Start-Virtual-Mic.cmd**. The app reads from your default Windows microphone and sends the processed sound to **CABLE Input**. To choose another physical microphone, run the launcher with `--mic INDEX`.
+3. In the call app, select **CABLE Output** as the microphone and keep your headphones or speakers as the call's audio output. Leave the monitor running.
+
+The call receives delayed microphone audio during clear periods and the tone during detected alarms. The virtual mic adds about 0.9 seconds of buffering plus device latency to give recognition time to react. Late or missed detections can let speech through. Some call apps suppress sustained tones as noise.
 
 ## Test
 
