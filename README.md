@@ -10,7 +10,11 @@ A local Windows demo inspired by [Raul Engineer's Short](https://www.youtube.com
 
 The movement check can flag a static fake mouth if its shape triggers the check or you start it manually. Camera angle, tracking loss, lighting, and slow responses can also cause a timeout. A single webcam cannot establish intent or reliably identify all props, moving overlays, or prerecorded inputs. The covered-mouth beep specifically uses visible hand overlap.
 
-## Run from source
+## Quick start
+
+Install [64-bit Python 3.14](https://www.python.org/downloads/windows/), extract the full project ZIP, then double-click **Start-MouthAlarm.cmd**. Keep it in the same folder as the other project files. The first run installs dependencies and downloads the two models. After that, double-click the same file to reopen the app.
+
+## Manual setup
 
 From the source folder in PowerShell with 64-bit Python 3.14:
 
@@ -22,8 +26,6 @@ powershell -NoProfile -File .\setup-models.ps1
 ```
 
 If you already set up an earlier version, rerun the dependency install command to add the speech detector. If the wrong camera opens, add `--camera 1`. Use `--mic INDEX` to select an input listed by `python -m sounddevice`, or `--no-mic` for webcam-only mode. Run with `--check-models` to check the models without opening the webcam.
-
-After setup you can double-click `Start-MouthAlarm.cmd` to start it.
 
 ## Test
 
