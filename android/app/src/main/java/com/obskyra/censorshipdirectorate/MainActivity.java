@@ -6,6 +6,8 @@ import android.content.res.Configuration;
 import android.graphics.Color;
 import android.media.Image;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.Gravity;
@@ -18,7 +20,9 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import androidx.activity.ComponentActivity;
+import androidx.camera.core.Camera;
 import androidx.camera.core.CameraSelector;
+import androidx.camera.core.CameraState;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.Preview;
 import androidx.camera.core.ImageProxy;
@@ -53,6 +57,12 @@ public final class MainActivity extends ComponentActivity {
     private static final int MUTED = Color.rgb(190, 173, 187);
 
     private final ExecutorService analysis = Executors.newSingleThreadExecutor();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final List<String> cameraAlarms = new ArrayList<>();
+    private boolean cameraStreaming = false;
+    private boolean previewOnly = false;
+    private int cameraAttempt = 0;
+    private long manualBeepUntil = 0L;
     private final Map<String, Long> warningSince = new HashMap<>();
     private ProcessCameraProvider cameraProvider;
     private FaceDetector faceDetector;
@@ -127,6 +137,13 @@ public final class MainActivity extends ComponentActivity {
         preview = new PreviewView(this);
         preview.setScaleType(PreviewView.ScaleType.FILL_CENTER);
         preview.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
+        preview.getPreviewStreamState().observe(this, state -> {
+            if (state == PreviewView.StreamState.STREAMING) {
+                cameraStreaming = true;
+                cameraLabel.setText("Camera: " + (frontCamera ? "Front" : "Back")
+                    + " • LIVE" + (previewOnly ? " (preview only)" : ""));
+            }
+        });
         cameraBox.addView(preview, new FrameLayout.LayoutParams(-1, -1));
         faceOverlay = new FaceOverlay(this);
         cameraBox.addView(faceOverlay, new FrameLayout.LayoutParams(-1, -1));
@@ -179,6 +196,27 @@ public final class MainActivity extends ComponentActivity {
         });
         side.addView(switchCamera, new LinearLayout.LayoutParams(-1, dp(47)));
 
+        LinearLayout tools = new LinearLayout(this);
+        tools.setOrientation(LinearLayout.HORIZONTAL);
+        Button retry = new Button(this);
+        retry.setText("Retry camera");
+        retry.setTextColor(TEXT);
+        retry.setOnClickListener(v -> {
+            if (!granted(Manifest.permission.CAMERA)) requestNeededPermissions();
+            else startCamera();
+        });
+        tools.addView(retry, new LinearLayout.LayoutParams(0, dp(49), 1f));
+        Button test = new Button(this);
+        test.setText("Test beep");
+        test.setTextColor(TEXT);
+        test.setOnClickListener(v -> {
+            manualBeepUntil = SystemClock.elapsedRealtime() + 1200L;
+            updateAlarmOutput();
+            mainHandler.postDelayed(this::updateAlarmOutput, 1300L);
+        });
+        tools.addView(test, new LinearLayout.LayoutParams(0, dp(49), 1f));
+        side.addView(tools, new LinearLayout.LayoutParams(-1, dp(49)));
+
         if (landscape) {
             LinearLayout.LayoutParams camParams = new LinearLayout.LayoutParams(
                 0, -1, 2.2f);
@@ -216,16 +254,21 @@ public final class MainActivity extends ComponentActivity {
 
     private void startServices() {
         if (granted(Manifest.permission.CAMERA)) startCamera();
-        else faceLabel.setText("Camera permission required");
+        else {
+            faceLabel.setText("Camera permission required");
+            cameraLabel.setText("Camera denied • tap Retry camera");
+        }
         if (granted(Manifest.permission.RECORD_AUDIO) && microphone == null) {
             microphone = new AudioMonitor(level -> runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
                 waveform.addLevel(level);
                 if (!tone.isPlaying() && level > 0.04f) {
-                    micActiveUntil = SystemClock.elapsedRealtime() + 300L;
+                    micActiveUntil = SystemClock.elapsedRealtime() + 550L;
                 }
                 micLabel.setText("Mic:  " +
                     (SystemClock.elapsedRealtime() < micActiveUntil ? "Sound detected" : "Listening"));
+                // Mic alarms must work even when camera/ML Kit cannot deliver frames.
+                updateAlarmOutput();
             }));
             microphone.start();
         } else if (!granted(Manifest.permission.RECORD_AUDIO)) {
@@ -234,36 +277,100 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void startCamera() {
-        if (!granted(Manifest.permission.CAMERA)) return;
+        if (!granted(Manifest.permission.CAMERA)) {
+            requestNeededPermissions();
+            return;
+        }
+        cameraLabel.setText("Camera: opening…");
+        faceLabel.setText("Face: waiting for video");
+        cameraAlarms.clear();
+        updateAlarmOutput();
+
         ListenableFuture<ProcessCameraProvider> pending = ProcessCameraProvider.getInstance(this);
         pending.addListener(() -> {
             if (isFinishing() || isDestroyed()) return;
             try {
                 cameraProvider = pending.get();
-                cameraProvider.unbindAll();
-                int requested = frontCamera ? CameraSelector.LENS_FACING_FRONT
-                                            : CameraSelector.LENS_FACING_BACK;
-                CameraSelector selector = new CameraSelector.Builder()
-                    .requireLensFacing(requested).build();
-                if (!cameraProvider.hasCamera(selector)) {
-                    frontCamera = !frontCamera;
-                    selector = new CameraSelector.Builder()
-                        .requireLensFacing(frontCamera ? CameraSelector.LENS_FACING_FRONT
-                                                       : CameraSelector.LENS_FACING_BACK).build();
-                }
-                Preview cameraPreview = new Preview.Builder().build();
-                cameraPreview.setSurfaceProvider(preview.getSurfaceProvider());
+                bindCamera(false);
+            } catch (Exception e) {
+                cameraLabel.setText("Camera failed: " + e.getClass().getSimpleName());
+                faceLabel.setText("Tap Retry camera • check permissions");
+                Log.e(TAG, "Camera provider startup failed", e);
+            }
+        }, ContextCompat.getMainExecutor(this));
+    }
+
+    private void bindCamera(boolean previewOnlyMode) {
+        if (cameraProvider == null || isFinishing() || isDestroyed()) return;
+        final int attempt = ++cameraAttempt;
+        cameraStreaming = false;
+        previewOnly = previewOnlyMode;
+        cameraProvider.unbindAll();
+
+        try {
+            CameraSelector requested = new CameraSelector.Builder()
+                .requireLensFacing(frontCamera
+                    ? CameraSelector.LENS_FACING_FRONT
+                    : CameraSelector.LENS_FACING_BACK).build();
+            if (!cameraProvider.hasCamera(requested)) {
+                frontCamera = !frontCamera;
+                requested = new CameraSelector.Builder()
+                    .requireLensFacing(frontCamera
+                        ? CameraSelector.LENS_FACING_FRONT
+                        : CameraSelector.LENS_FACING_BACK).build();
+            }
+            if (!cameraProvider.hasCamera(requested)) {
+                cameraLabel.setText("No camera reported by Android");
+                faceLabel.setText("Check camera access • tap Retry camera");
+                return;
+            }
+
+            Preview cameraPreview = new Preview.Builder().build();
+            cameraPreview.setSurfaceProvider(preview.getSurfaceProvider());
+            Camera bound;
+            if (previewOnlyMode) {
+                bound = cameraProvider.bindToLifecycle(this, requested, cameraPreview);
+            } else {
                 ImageAnalysis frames = new ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build();
                 frames.setAnalyzer(analysis, this::analyze);
-                cameraProvider.bindToLifecycle(this, selector, cameraPreview, frames);
-                cameraLabel.setText("Camera:  " + (frontCamera ? "Front" : "Back"));
-            } catch (Exception e) {
-                faceLabel.setText("Camera error: " + e.getMessage());
-                Log.e(TAG, "Camera failed", e);
+                try {
+                    bound = cameraProvider.bindToLifecycle(this, requested, cameraPreview, frames);
+                } catch (Exception combinedFailure) {
+                    // Some devices cannot provide preview + analysis at once.
+                    Log.w(TAG, "Combined preview/analysis failed; retrying preview alone",
+                          combinedFailure);
+                    bindCamera(true);
+                    return;
+                }
             }
-        }, ContextCompat.getMainExecutor(this));
+            bound.getCameraInfo().getCameraState().observe(this, state -> {
+                if (attempt != cameraAttempt) return;
+                if (state.getError() != null) {
+                    cameraLabel.setText("Camera error " + state.getError().getCode()
+                        + " • tap Retry camera");
+                    Log.e(TAG, "CameraX state error " + state.getError().getCode());
+                }
+            });
+            cameraLabel.setText("Camera: " + (frontCamera ? "Front" : "Back")
+                + " • opening" + (previewOnlyMode ? " (preview only)" : ""));
+            mainHandler.postDelayed(() -> {
+                if (attempt != cameraAttempt || cameraStreaming || isFinishing()
+                    || isDestroyed()) return;
+                if (!previewOnlyMode) {
+                    Log.w(TAG, "Preview did not stream; trying preview-only fallback");
+                    bindCamera(true);
+                } else {
+                    cameraLabel.setText("No camera preview • tap Retry camera");
+                    faceLabel.setText("Check Android camera privacy switch and permissions");
+                }
+            }, 6000L);
+        } catch (Exception e) {
+            cameraLabel.setText("Camera failed: " + e.getClass().getSimpleName());
+            faceLabel.setText("Tap Retry camera • check permissions");
+            Log.e(TAG, "Camera binding failed", e);
+        }
     }
 
     private void analyze(ImageProxy imageProxy) {
@@ -278,17 +385,25 @@ public final class MainActivity extends ComponentActivity {
         final int rotatedH = rotation == 90 || rotation == 270 ? w : h;
         final float luminance = sampleLuma(imageProxy);
         final InputImage input = InputImage.fromMediaImage(image, rotation);
-        faceDetector.process(input)
-            .addOnSuccessListener(faces -> {
-                if (!isFinishing() && !isDestroyed()) {
-                    frameWidth = rotatedW;
-                    frameHeight = rotatedH;
-                    evaluate(faces, luminance);
-                    faceOverlay.setFaces(faces, rotatedW, rotatedH, frontCamera);
-                }
-            })
-            .addOnFailureListener(e -> Log.w(TAG, "Face detection failed", e))
-            .addOnCompleteListener(t -> imageProxy.close());
+        try {
+            faceDetector.process(input)
+                .addOnSuccessListener(faces -> {
+                    if (!isFinishing() && !isDestroyed()) {
+                        frameWidth = rotatedW;
+                        frameHeight = rotatedH;
+                        evaluate(faces, luminance);
+                        faceOverlay.setFaces(faces, rotatedW, rotatedH, frontCamera);
+                    }
+                })
+                .addOnFailureListener(e -> {
+                    Log.w(TAG, "Face detection failed; preview should remain available", e);
+                    faceLabel.setText("Face detection unavailable");
+                })
+                .addOnCompleteListener(t -> imageProxy.close());
+        } catch (RuntimeException e) {
+            imageProxy.close();
+            Log.e(TAG, "Face analysis failed", e);
+        }
     }
 
     private float sampleLuma(ImageProxy proxy) {
@@ -347,29 +462,43 @@ public final class MainActivity extends ComponentActivity {
             lastFaceX = lastFaceY = Float.NaN;
         }
 
-        // Detect acoustic activity, not speech transcripts or words.
-        if (now < micActiveUntil && !tone.isPlaying()) alarms.add("MIC: SOUND DETECTED");
-
-        alarmTitle.setText(alarms.isEmpty() ? "UNDER OBSERVATION" : "⚠ ALARM ACTIVE");
-        alarmTitle.setBackgroundColor(alarms.isEmpty() ?
-            Color.rgb(76, 22, 29) : RED);
-        alarmTitle.setTextColor(alarms.isEmpty() ? TEXT : Color.BLACK);
-        if (alarms.isEmpty()) alarmList.setText("No active alarms");
-        else {
-            StringBuilder list = new StringBuilder();
-            for (String reason : alarms) list.append("■  ").append(reason).append('\n');
-            alarmList.setText(list.toString().trim());
-        }
-        alarmList.setTextColor(alarms.isEmpty() ? MUTED : RED);
+        cameraAlarms.clear();
+        cameraAlarms.addAll(alarms);
+        updateAlarmOutput();
         mouthLabel.setText("Mouth:  " + (ratio < 0 ? "--" :
                             String.format(java.util.Locale.US, "%.2f", ratio)) +
                             "  /  0.15");
         faceLabel.setText("Face:  " + (primary == null ? "Not visible" :
                           faces.size() == 1 ? "Tracking" : faces.size()+" detected"));
-        cameraLabel.setText("Camera:  " + (frontCamera ? "Front" : "Back") + " • " +
-                            frameWidth + " × " + frameHeight);
-        // Don't play at full volume and don't create a microphone feedback loop.
-        tone.setPlaying(!alarms.isEmpty());
+        if (cameraStreaming) cameraLabel.setText("Camera: " +
+            (frontCamera ? "Front" : "Back") + " • " +
+            frameWidth + " × " + frameHeight + (previewOnly ? " (preview only)" : ""));
+    }
+
+    private void updateAlarmOutput() {
+        if (isFinishing() || isDestroyed() || alarmList == null || tone == null) return;
+        long now = SystemClock.elapsedRealtime();
+        List<String> alarms = new ArrayList<>(cameraAlarms);
+        if (now < micActiveUntil && now >= manualBeepUntil)
+            alarms.add("MIC: SOUND DETECTED");
+        if (now < manualBeepUntil) alarms.add("TEST BEEP");
+
+        boolean active = !alarms.isEmpty();
+        alarmTitle.setText(active ? "⚠ ALARM ACTIVE" : "UNDER OBSERVATION");
+        alarmTitle.setBackgroundColor(active ? RED : Color.rgb(76, 22, 29));
+        alarmTitle.setTextColor(active ? Color.BLACK : TEXT);
+        if (!active) {
+            alarmList.setText("No active alarms");
+            alarmList.setTextColor(MUTED);
+        } else {
+            StringBuilder list = new StringBuilder();
+            for (String reason : alarms) list.append("■  ").append(reason).append('\n');
+            alarmList.setText(list.toString().trim());
+            alarmList.setTextColor(RED);
+        }
+        if (!tone.setPlaying(active)) {
+            micLabel.setText("Alarm audio unavailable • check alarm volume");
+        }
     }
 
     private float mouthRatio(Face face) {
@@ -400,6 +529,8 @@ public final class MainActivity extends ComponentActivity {
     }
 
     @Override protected void onDestroy() {
+        cameraAttempt++;
+        mainHandler.removeCallbacksAndMessages(null);
         if (cameraProvider != null) cameraProvider.unbindAll();
         if (microphone != null) microphone.close();
         if (tone != null) tone.close();

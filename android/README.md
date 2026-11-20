@@ -30,3 +30,13 @@ gradle :app:assembleDebug
 The debug APK is in `app/build/outputs/apk/debug/app-debug.apk`. CI publishes an installable (debug-signed) preview APK as a GitHub Release asset. Since debug signing keys are not persistent, future preview builds may require uninstalling earlier versions first.
 
 Production releases should use a stable Android signing key and undergo on-device testing.
+
+## Camera / sound troubleshooting
+
+1. Grant Camera and Microphone permissions when prompted (Android Settings → Apps → Censorship Directorate → Permissions).
+2. Check Android's system-wide **Camera access** and **Microphone access** privacy switches.
+3. If the camera area stays black, tap **Retry camera**. Try **Switch camera** if the front camera cannot be opened. The app will also fall back to a preview-only mode if the combined camera/face-analysis session never starts.
+4. Tap **Test beep** to check audio without a working camera. The tone is sent to Android's **alarm** audio channel, so raise the phone's alarm volume if you cannot hear it.
+5. If camera preview works but face tracking isn't available, the camera should still display video and its status panel should report the problem.
+
+The APK is a debug-signed preview. Because signing keys are generated separately by GitHub Actions, you may need to **uninstall the previous preview before installing this update**. This clears that app's local data. Android cannot update a package signed with a different certificate.
