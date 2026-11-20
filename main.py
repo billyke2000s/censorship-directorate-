@@ -11,15 +11,14 @@ import numpy as np
 
 from alarm import LIP_OUTLINE, OPEN_THRESHOLD, Monitor, head_turned, mouth_open_alarm, mouth_ratio
 from camera_capture import LatestCamera
+from console_ui import render_console
 from speech import SpeechState, microphone
 
 
-WINDOW = "Censorship System"
+WINDOW = "Censorship Directorate"
 MODELS = ("face_landmarker.task", "hand_landmarker.task")
 RED = (58, 61, 255)
 GREEN = (110, 235, 125)
-PANEL = (14, 15, 19)
-PAPER = (209, 220, 236)
 
 
 def write_tv_tone(path):
@@ -93,10 +92,13 @@ def draw_face_corners(frame, points, active):
     bounds = np.asarray([points[index] for index in (10, 152, 234, 454)])
     left, top = bounds.min(axis=0)
     right, bottom = bounds.max(axis=0)
-    padding = max(5, (right - left) * 0.12)
-    left, top = max(0, round(left - padding)), max(0, round(top - padding))
-    right = min(width - 1, round(right + padding))
-    bottom = min(height - 1, round(bottom + padding))
+    # FaceMesh landmarks follow the face, not the outer hairstyle.
+    # Expand the tracking frame to include the forehead, hair and chin.
+    horizontal = max(6, (right - left) * 0.17)
+    vertical = max(6, (bottom - top) * 0.20)
+    left, top = max(0, round(left - horizontal)), max(0, round(top - vertical * 1.4))
+    right = min(width - 1, round(right + horizontal))
+    bottom = min(height - 1, round(bottom + vertical * 0.45))
     length = round(min(right - left, bottom - top) * 0.19)
     if length < 3:
         return
@@ -166,33 +168,6 @@ def create_landmarkers(directory, stack):
     return face, hands
 
 
-def draw_label(frame, label, y, color=(240, 240, 240), size=0.60, x=16):
-    cv2.putText(frame, label, (x, y), cv2.FONT_HERSHEY_SIMPLEX, size, color, 1,
-                cv2.LINE_AA)
-
-
-def fill_camera_preview(frame, panel_width, panel_height):
-    height, width = frame.shape[:2]
-    # Some portrait cameras send a landscape stream with black columns already embedded.
-    rows = frame[::max(1, height // 64)]
-    visible = np.flatnonzero((rows.max(axis=2) > 16).mean(axis=0) >= 0.10)
-    if visible.size:
-        left, right = int(visible[0]), int(visible[-1]) + 1
-        right_bar = width - right
-        if (min(left, right_bar) >= width * 0.04 and
-                abs(left - right_bar) <= width * 0.04 and right - left >= width * 0.20):
-            frame = frame[:, left:right]
-            width = right - left
-
-    crop_width = min(width, max(1, round(height * panel_width / panel_height)))
-    crop_height = min(height, max(1, round(width * panel_height / panel_width)))
-    x = (width - crop_width) // 2
-    y = (height - crop_height) // 2
-    crop = frame[y:y + crop_height, x:x + crop_width]
-    interpolation = cv2.INTER_AREA if crop_width > panel_width else cv2.INTER_LINEAR
-    return cv2.resize(crop, (panel_width, panel_height), interpolation=interpolation)
-
-
 def tracking_frame(frame, limit=960):
     height, width = frame.shape[:2]
     if max(height, width) <= limit:
@@ -200,42 +175,6 @@ def tracking_frame(frame, limit=960):
     scale = limit / max(height, width)
     return cv2.resize(frame, (round(width * scale), round(height * scale)),
                       interpolation=cv2.INTER_AREA)
-
-
-def render_console(frame, reasons, status, mic_status, reading, window_size=None):
-    screen = np.full((690, 1190, 3), PANEL, dtype=np.uint8)
-    height, width = frame.shape[:2]
-    cv2.rectangle(screen, (15, 71), (896, 672), RED if reasons else (80, 83, 91), 1)
-    cv2.rectangle(screen, (0, 0), (1189, 54), (26, 27, 156), -1)
-    cv2.rectangle(screen, (912, 72), (1174, 672), (27, 27, 34), -1)
-    cv2.rectangle(screen, (912, 72), (1174, 125), RED if reasons else PAPER, -1)
-    draw_label(screen, "CENSORSHIP DIRECTORATE", 38, PAPER, 1.02)
-    draw_label(screen, "LIVE SURVEILLANCE", 36, PAPER, 0.55, 984)
-    draw_label(screen, "ALARM ACTIVE" if reasons else "UNDER OBSERVATION",
-               108, PANEL, 0.68, 928)
-    for index, reason in enumerate(reasons):
-        y = 151 + index * 28
-        cv2.rectangle(screen, (928, y - 8), (934, y - 2), RED, -1)
-        draw_label(screen, reason, y, RED, 0.53, 943)
-    cv2.line(screen, (928, 381), (1158, 381), (77, 75, 88), 1)
-    draw_label(screen, status, 411, PAPER, 0.56, 928)
-    draw_label(screen, f"MAR {reading}  /  {OPEN_THRESHOLD:.2f}", 448, size=0.54, x=928)
-    draw_label(screen, mic_status, 482, size=0.54, x=928)
-    draw_label(screen, f"Camera {width} x {height}", 516, size=0.54, x=928)
-    window_width, window_height = window_size or (1190, 690)
-    if window_width < 16 or window_height < 16:
-        window_width, window_height = 1190, 690
-    scale = min(window_width / 1190, window_height / 690)
-    scaled_width, scaled_height = round(1190 * scale), round(690 * scale)
-    interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
-    scaled = cv2.resize(screen, (scaled_width, scaled_height), interpolation=interpolation)
-    left, right = round(16 * scale), round(896 * scale)
-    top, bottom = round(72 * scale), round(672 * scale)
-    scaled[top:bottom, left:right] = fill_camera_preview(frame, right - left, bottom - top)
-    canvas = np.full((window_height, window_width, 3), PANEL, dtype=np.uint8)
-    x, y = (window_width - scaled_width) // 2, (window_height - scaled_height) // 2
-    canvas[y:y + scaled_height, x:x + scaled_width] = scaled
-    return canvas
 
 
 def camera_resolution(value):
@@ -304,8 +243,8 @@ def run_camera(resolution, face, hands, speech, audio_stream, cable, tone):
         camera = LatestCamera(camera)
         ok = True
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(WINDOW, 1190, 690)
-        window_size = (1190, 690)
+        cv2.resizeWindow(WINDOW, 1280, 853)
+        window_size = (1280, 853)
         while True:
             if audio_stream is not None and not audio_stream.active:
                 raise RuntimeError("The microphone stopped. Reconnect it and restart.")
@@ -404,7 +343,7 @@ def run_camera(resolution, face, hands, speech, audio_stream, cable, tone):
             if cable is not None:
                 mic_status = "Virtual mic -> CABLE Output"
             cv2.imshow(WINDOW, render_console(frame, reasons, status, mic_status, reading,
-                                               window_size))
+                                               window_size, audio_history=speech.waveform))
             cv2.waitKey(1)
             if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
                 break

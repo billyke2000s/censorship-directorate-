@@ -1,5 +1,6 @@
 """Classify microphone frames locally without saving or transcribing them."""
 
+from collections import deque
 from contextlib import contextmanager
 from queue import Empty, Full, Queue
 from threading import Event, Thread
@@ -27,6 +28,7 @@ class SpeechState:
         self.camera_checked_at = 0.0
         self.voice_window = (float("inf"), 0.0)
         self.voiced_frames = 0
+        self.waveform = deque(maxlen=55)
         self.error = None
 
     def update(self, now, voiced):
@@ -69,6 +71,10 @@ def microphone(device, state, *, virtual_mic=False, cable_device=None):
     def callback(data, _frames, _time, status):
         if not status:
             captured, pcm = monotonic(), bytes(data)
+            # Store real, recent microphone peaks for the live console.
+            samples = np.frombuffer(pcm, dtype="<i2").astype(np.int32)
+            peak = float(np.max(np.abs(samples))) / 8192.0 if samples.size else 0.0
+            state.waveform.append(min(1.0, peak))
             if route is not None:
                 route.capture(captured, pcm)
             try:
