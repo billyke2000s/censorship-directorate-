@@ -17,9 +17,11 @@ WINDOWS SURVEILLANCE CONSOLE · OPERATOR MANUAL</p>
 
 ## ORDER 01 · ACTIVATE THE STATION
 
-1. Install [64-bit Python 3.14](https://www.python.org/downloads/windows/).
-2. Extract the entire project ZIP. Keep the launcher with the other project files.
-3. Double-click **`Start-MouthAlarm.cmd`**. On first launch, it installs the dependencies and downloads the camera models.
+**[Download the latest release](https://github.com/billyke2000s/censorship-system/releases/latest)** (Windows source ZIP; Python 3.14 is required, this is not a prebuilt EXE).
+
+1. Download and extract the ZIP from the Releases page.
+2. Install [64-bit Python 3.14](https://www.python.org/downloads/windows/).
+3. Keep the launcher with the other project files. Double-click **`Start-MouthAlarm.cmd`**. On first launch, it installs the dependencies and downloads the camera models.
 
 Use the same launcher for each session. Close the station with the window’s **X** button.
 
