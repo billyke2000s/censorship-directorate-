@@ -11,6 +11,7 @@ import numpy as np
 
 from alarm import LIP_OUTLINE, OPEN_THRESHOLD, Monitor, head_turned, mouth_open_alarm, mouth_ratio
 from camera_capture import LatestCamera
+from camera_select import choose_camera
 from console_ui import render_console
 from speech import SpeechState, microphone
 
@@ -219,11 +220,26 @@ def first_camera_frame(camera, requested):
     raise RuntimeError("The webcam did not send frames at the requested or default resolution.")
 
 
-def run_camera(resolution, face, hands, speech, audio_stream, cable, tone):
-    camera = cv2.VideoCapture(0)
-    if not camera.isOpened():
-        camera.release()
-        raise RuntimeError("Could not open the default camera. Check Windows camera access.")
+def run_camera(resolution, face, hands, speech, audio_stream, cable, tone,
+               camera_index=None, camera_backend=None):
+    # Keep timestamps increasing across camera discovery and normal tracking.
+    probe_timestamp = -1
+
+    def face_present(candidate):
+        nonlocal probe_timestamp
+        frame = cv2.flip(candidate, 1)
+        probe_timestamp = max(probe_timestamp + 1, int(monotonic() * 1000))
+        sample = mp.Image(
+            image_format=mp.ImageFormat.SRGB,
+            data=cv2.cvtColor(tracking_frame(frame), cv2.COLOR_BGR2RGB)
+        )
+        return bool(face.detect_for_video(sample, probe_timestamp).face_landmarks)
+
+    camera, first_image, selected_index, selected_backend = choose_camera(
+        face_present, requested_index=camera_index,
+        requested_backend=camera_backend,
+    )
+    print(f"Using camera {selected_index} (OpenCV backend {selected_backend}).")
 
     monitor = Monitor()
     profile_detector = cv2.CascadeClassifier(
@@ -236,7 +252,7 @@ def run_camera(resolution, face, hands, speech, audio_stream, cable, tone):
     still_reference = None
     last_sample_at = 0.0
     is_open = False
-    timestamp = -1
+    timestamp = probe_timestamp
     started = monotonic()
     try:
         image = first_camera_frame(camera, resolution)
@@ -257,7 +273,7 @@ def run_camera(resolution, face, hands, speech, audio_stream, cable, tone):
             frame = cv2.flip(image, 1)
             height, width = frame.shape[:2]
             now = monotonic()
-            timestamp = max(timestamp + 1, int((now - started) * 1000))
+            timestamp = max(timestamp + 1, int(now * 1000))
             sample = mp.Image(image_format=mp.ImageFormat.SRGB,
                               data=cv2.cvtColor(tracking_frame(frame), cv2.COLOR_BGR2RGB))
             face_result = face.detect_for_video(sample, timestamp)
@@ -364,6 +380,10 @@ def main():
     parser = argparse.ArgumentParser(description="Webcam mouth alarm for Windows")
     parser.add_argument("--resolution", type=camera_resolution,
                         help="Request WIDTHxHEIGHT; defaults to trying up to 3840x2160")
+    parser.add_argument("--camera", type=int,
+                        help="Force a camera index (0-9), rather than scan for a face")
+    parser.add_argument("--camera-backend", choices=("dshow", "msmf", "auto"),
+                        help="Force a Windows capture backend (default: scan them all)")
     parser.add_argument("--mic", type=int, help="Use this microphone device index")
     parser.add_argument("--no-mic", action="store_true", help="Run webcam checks only")
     parser.add_argument("--virtual-mic", action="store_true", help="Send filtered audio to VB-CABLE")
@@ -397,7 +417,13 @@ def main():
                 temp_dir = stack.enter_context(TemporaryDirectory(prefix="mouth-alarm-"))
                 tone = Path(temp_dir) / "alarm.wav"
                 write_tv_tone(tone)
-                run_camera(args.resolution, face, hands, speech, stream, cable, tone)
+                run_camera(
+                    args.resolution, face, hands, speech, stream, cable, tone,
+                    camera_index=args.camera,
+                    camera_backend={"dshow": cv2.CAP_DSHOW,
+                                    "msmf": cv2.CAP_MSMF,
+                                    "auto": cv2.CAP_ANY}.get(args.camera_backend),
+                )
     except (RuntimeError, OSError, ValueError, ImportError) as error:
         parser.exit(1, f"Mouth Alarm: {error}\n")
 

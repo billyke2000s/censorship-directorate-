@@ -26,6 +26,8 @@ You need **Windows**, a **webcam**, and **64-bit Python 3.14**. A microphone is 
 2. [Install Python 3.14](https://www.python.org/downloads/windows/) if you haven't already. Make sure the Python launcher (`py`) is installed.
 3. Double-click `Start-MouthAlarm.cmd` in the extracted folder.
 
+At startup the app checks camera indexes 0-9 with Windows camera backends, prefers a camera showing a face, and otherwise uses a working feed. If OBS Virtual Camera is not registered in Windows, scanning cannot make it appear.
+
 The first launch installs the Python packages and downloads the face/hand tracking models, so it needs an internet connection. After that, just use the same launcher. Close the window normally to stop it.
 
 **It's a source ZIP, not an EXE.** Python needs to be installed first.
@@ -66,6 +68,8 @@ Run the launcher from PowerShell if you want to pass arguments:
 | Option | What it does |
 | --- | --- |
 | `--resolution WIDTHxHEIGHT` | Request a camera resolution, e.g. `1920x1080`. By default it tries modes up to 4K. |
+| `--camera INDEX` | Force a specific camera (0-9) instead of scanning for faces. |
+| `--camera-backend dshow` | Force DirectShow (also supports `msmf` or `auto`); useful for OBS Virtual Camera. |
 | `--mic INDEX` | Pick a particular microphone. |
 | `--no-mic` | Run without the microphone. |
 | `--check-models` | Check whether the tracking models load. |
