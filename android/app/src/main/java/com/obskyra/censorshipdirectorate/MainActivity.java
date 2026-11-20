@@ -126,6 +126,7 @@ public final class MainActivity extends ComponentActivity {
         cameraBox.setBackgroundColor(Color.BLACK);
         preview = new PreviewView(this);
         preview.setScaleType(PreviewView.ScaleType.FILL_CENTER);
+        preview.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
         cameraBox.addView(preview, new FrameLayout.LayoutParams(-1, -1));
         faceOverlay = new FaceOverlay(this);
         cameraBox.addView(faceOverlay, new FrameLayout.LayoutParams(-1, -1));

@@ -38,17 +38,9 @@ jobs:
         with:
           name: Censorship-Directorate-Android-Preview
           path: android/app/build/outputs/apk/debug/app-debug.apk
-      - name: Publish Android preview release
+      - name: Add Android APK to v0.1.2 release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp android/app/build/outputs/apk/debug/app-debug.apk Censorship-Directorate-Android-Preview.apk
-          TAG="v0.2.0-android-preview"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" Censorship-Directorate-Android-Preview.apk --clobber
-          else
-            gh release create "$TAG" Censorship-Directorate-Android-Preview.apk \
-              --target "$GITHUB_SHA" --prerelease \
-              --title "Censorship Directorate Android preview" \
-              --notes "Android native preview. Mouth/face tracking, microphone sound activity and local alarm tone. Hand-cover tracking and system-wide virtual microphone routing are not yet supported. Debug-signed APK: future builds may need a reinstall."
-          fi
+          gh release upload v0.1.2 Censorship-Directorate-Android-Preview.apk --clobber
