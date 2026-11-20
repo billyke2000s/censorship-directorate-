@@ -4,7 +4,7 @@
 
 # Censorship Directorate
 
-A Windows app that gets annoyed when you open your mouth.
+A Windows app that monitors state compliance 
 
 I saw [Raul Engineer's video](https://www.youtube.com/shorts/dYAdNCzWI3o) and wanted to make something similar. It watches your webcam and microphone, and sets off an obnoxious 1 kHz test tone whenever you break one of its completely reasonable rules.
 
