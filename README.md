@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/directorate-banner.jpg" alt="Censorship Directorate. Remain in frame. Red propaganda poster featuring a surveillance camera." width="100%">
+  <img src="docs/images/directorate-banner.svg" alt="Censorship Directorate. Remain in frame. Red propaganda poster with a surveillance portrait." width="100%">
 </p>
 
 <p align="center"><strong>PUBLIC ADDRESS CONTROL DIVISION</strong><br>
@@ -30,8 +30,8 @@ Use the same launcher for each session. Close the station with the window’s **
 The station sounds a continuous **1 kHz television test tone** while an alarm is active. The right-hand panel lists every active alarm.
 
 <p align="center">
-  <img src="docs/images/console-demo.jpg" alt="The Censorship Directorate app showing its red alarm panel with Mouth Open and Mic Voice Detected active." width="100%"><br>
-  <em>Console demonstration with an illustrated camera feed.</em>
+  <img src="docs/images/console-demo.svg" alt="The Censorship Directorate app showing its red alarm panel with Mouth Open and Mic Voice Detected active." width="100%"><br>
+  <em>Console demonstration with a photographic example camera feed.</em>
 </p>
 
 | Alarm | Trigger |
