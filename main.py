@@ -188,7 +188,7 @@ def camera_resolution(value):
     raise argparse.ArgumentTypeError("Use WIDTHxHEIGHT, for example 3840x2160")
 
 
-def first_camera_frame(camera, requested):
+def first_camera_frame(camera, requested, fallback=None):
     default = (int(camera.get(cv2.CAP_PROP_FRAME_WIDTH)),
                int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT)))
     modes = ((requested, default) if requested else sorted(
@@ -217,6 +217,10 @@ def first_camera_frame(camera, requested):
         ok, frame = camera.read()
         if ok:
             return frame
+    if fallback is not None:
+        # OBS and other virtual cameras may ignore resolution negotiation but
+        # have already provided a valid frame during device discovery.
+        return fallback
     raise RuntimeError("The webcam did not send frames at the requested or default resolution.")
 
 
@@ -255,7 +259,7 @@ def run_camera(resolution, face, hands, speech, audio_stream, cable, tone,
     timestamp = probe_timestamp
     started = monotonic()
     try:
-        image = first_camera_frame(camera, resolution)
+        image = first_camera_frame(camera, resolution, first_image)
         camera = LatestCamera(camera)
         ok = True
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)

@@ -5,12 +5,15 @@ on:
     branches: [main]
     paths:
       - .github/workflows/release.yml
+      - main.py
+      - camera_select.py
+      - test_camera_select.py
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v0.1.1)'
+        description: 'Release tag (e.g. v0.1.2)'
         required: true
-        default: 'v0.1.1'
+        default: 'v0.1.2'
 
 permissions:
   contents: write
@@ -25,6 +28,11 @@ jobs:
 
       - name: Validate Python syntax
         run: python3 -m compileall -q .
+
+      - name: Test camera selection without physical devices
+        run: |
+          python3 -m pip install -q numpy opencv-python-headless
+          python3 -m unittest -v test_camera_select
 
       - name: Package the Windows source distribution
         run: |
@@ -50,7 +58,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           INPUT_TAG: ${{ inputs.tag }}
         run: |
-          TAG="${INPUT_TAG:-v0.1.1}"
+          TAG="${INPUT_TAG:-v0.1.2}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" Censorship-Directorate-Windows-Source.zip --clobber
           else
