@@ -10,7 +10,7 @@ on:
       tag:
         description: 'Release tag (e.g. v0.1.1)'
         required: true
-        default: 'v0.1.0'
+        default: 'v0.1.1'
 
 permissions:
   contents: write
@@ -50,7 +50,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           INPUT_TAG: ${{ inputs.tag }}
         run: |
-          TAG="${INPUT_TAG:-v0.1.0}"
+          TAG="${INPUT_TAG:-v0.1.1}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" Censorship-Directorate-Windows-Source.zip --clobber
           else
