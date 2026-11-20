@@ -12,7 +12,7 @@ Native Android adaptation of the Windows joke surveillance app, using CameraX an
 ## Differences from Windows
 
 This is an **early preview**, not full feature parity:
-- ML Kit's lip contour geometry differs from MediaPipe, so the Android mouth-open threshold is calibrated separately (0.15, 0.10 clear).
+- ML Kit's lip contour geometry differs from MediaPipe, so the Android mouth-open threshold is calibrated separately (0.12, 0.075 clear).
 - Android sound activity is **not** WebRTC speech detection; it may trigger on non-speech noises.
 - Hand-over-mouth detection is not yet implemented.
 - Android apps cannot expose a system-wide virtual microphone using ordinary app privileges; the Windows VB-CABLE mode is not included.
@@ -36,7 +36,11 @@ Production releases should use a stable Android signing key and undergo on-devic
 1. Grant Camera and Microphone permissions when prompted (Android Settings → Apps → Censorship Directorate → Permissions).
 2. Check Android's system-wide **Camera access** and **Microphone access** privacy switches.
 3. If the camera area stays black, tap **Retry camera**. Try **Switch camera** if the front camera cannot be opened. The app will also fall back to a preview-only mode if the combined camera/face-analysis session never starts.
-4. Tap **Test beep** to check audio without a working camera. The tone is sent to Android's **alarm** audio channel, so raise the phone's alarm volume if you cannot hear it.
+4. Tap **Test beep** to check audio without a working camera. The tone is sent through Android's **media** volume. Raise your media volume if you can't hear it; the app reports playback errors and when media volume is zero.
 5. If camera preview works but face tracking isn't available, the camera should still display video and its status panel should report the problem.
 
 The APK is a debug-signed preview. Because signing keys are generated separately by GitHub Actions, you may need to **uninstall the previous preview before installing this update**. This clears that app's local data. Android cannot update a package signed with a different certificate.
+
+## Build 3 UI and sound fixes
+
+Portrait now scrolls instead of clipping the bottom buttons, landscape keeps the live video beside a scrollable panel, and both respect Android's system bars. Audio uses MediaPlayer to play a local 1 kHz WAV through media volume. Microphone activity has adaptive thresholds. 'Under observation' means no alarm is currently active; use Test beep to diagnose sound independently.

@@ -42,13 +42,12 @@ public class FaceOverlay extends View {
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-        paint.setStrokeWidth(1);
-        paint.setColor(Color.argb(22, 255, 40, 53));
-        for (int y=0; y<getHeight(); y+=8) canvas.drawLine(0,y,getWidth(),y,paint);
+        // Keep the camera preview clear; do not draw dark scanlines over faces.
 
         paint.setColor(Color.rgb(255, 47, 53));
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(3.5f*getResources().getDisplayMetrics().density);
+        paint.setShadowLayer(6f, 0f, 0f, Color.RED);
         for (Face face : faces) {
             android.graphics.Rect bounds = face.getBoundingBox();
             // Expand beyond landmarks: corners should surround the ENTIRE head.
@@ -72,6 +71,7 @@ public class FaceOverlay extends View {
             drawContour(canvas,face.getContour(FaceContour.UPPER_LIP_TOP));
             drawContour(canvas,face.getContour(FaceContour.LOWER_LIP_BOTTOM));
         }
+        paint.clearShadowLayer();
         paint.setStyle(Paint.Style.FILL);
     }
 

@@ -4,6 +4,9 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
+import android.media.AudioManager;
+import android.content.Context;
 import android.media.Image;
 import android.os.Bundle;
 import android.os.Handler;
@@ -29,6 +32,10 @@ import androidx.camera.core.ImageProxy;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.content.ContextCompat;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.graphics.Insets;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mlkit.vision.common.InputImage;
@@ -69,7 +76,9 @@ public final class MainActivity extends ComponentActivity {
     private PreviewView preview;
     private FaceOverlay faceOverlay;
     private WaveformView waveform;
-    private TextView alarmTitle, alarmList, mouthLabel, faceLabel, micLabel, cameraLabel;
+    private TextView alarmTitle, alarmList, mouthLabel, faceLabel, micLabel, cameraLabel, audioLabel;
+    private boolean lastAlarmActive = false;
+    private float micNoiseFloor = 0.0025f;
     private AlarmTone tone;
     private AudioMonitor microphone;
     private boolean frontCamera = true;
@@ -83,7 +92,7 @@ public final class MainActivity extends ComponentActivity {
         super.onCreate(state);
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
-        tone = new AlarmTone();
+        tone = new AlarmTone(this);
         faceDetector = FaceDetection.getClient(
             new FaceDetectorOptions.Builder()
                 .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
@@ -111,127 +120,184 @@ public final class MainActivity extends ComponentActivity {
         return v;
     }
 
+    private GradientDrawable rounded(int fill, int stroke, int radius) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(fill); d.setCornerRadius(dp(radius)); d.setStroke(dp(1), stroke);
+        return d;
+    }
+
+    private TextView stat(String label, boolean muted) {
+        TextView t = text(label, muted ? 13 : 15, muted ? MUTED : TEXT, !muted);
+        t.setPadding(dp(10), dp(3), dp(4), dp(3));
+        t.setMinHeight(dp(29));
+        return t;
+    }
+
+    private Button control(String label) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setTextSize(12);
+        button.setAllCaps(false);
+        button.setTextColor(TEXT);
+        button.setMinHeight(dp(42));
+        button.setPadding(dp(5), 0, dp(5), 0);
+        button.setBackground(rounded(Color.rgb(80, 12, 25), Color.rgb(160, 37, 48), 7));
+        return button;
+    }
+
+    private View divider() {
+        View line = new View(this);
+        line.setBackgroundColor(Color.rgb(101, 40, 51));
+        return line;
+    }
+
     private void makeLayout() {
         boolean landscape = getResources().getConfiguration().orientation ==
             Configuration.ORIENTATION_LANDSCAPE;
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(BG);
+        ViewCompat.setOnApplyWindowInsetsListener(root, (view, insets) -> {
+            Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() |
+                                          WindowInsetsCompat.Type.displayCutout());
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            return insets;
+        });
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(14), 0, dp(12), 0);
-        header.setBackgroundColor(Color.rgb(35, 10, 16));
-        TextView brand = text("◉  CENSORSHIP DIRECTORATE", landscape ? 22 : 15, TEXT, true);
-        header.addView(brand, new LinearLayout.LayoutParams(0, dp(62), 1f));
-        TextView live = text("● LIVE", 12, RED, true);
+        header.setPadding(dp(10), 0, dp(10), 0);
+        header.setBackground(rounded(Color.rgb(37, 5, 12), RED, 7));
+        LinearLayout.LayoutParams h = new LinearLayout.LayoutParams(-1, dp(62));
+        h.setMargins(dp(6), dp(5), dp(6), dp(5));
+        TextView eye = text("◉", 34, TEXT, true);
+        header.addView(eye, new LinearLayout.LayoutParams(dp(40), -1));
+        LinearLayout titleCol = new LinearLayout(this);
+        titleCol.setOrientation(LinearLayout.VERTICAL);
+        TextView title = text("CENSORSHIP DIRECTORATE", landscape ? 20 : 15, TEXT, true);
+        title.setSingleLine();
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        titleCol.addView(title);
+        titleCol.addView(text("SPEECH · EXPRESSION · COMPLIANCE", landscape ? 10 : 8, MUTED, false));
+        header.addView(titleCol, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView live = text(landscape ? "● LIVE SURVEILLANCE" : "● LIVE", landscape ? 11 : 10, TEXT, true);
+        live.setPadding(dp(7), dp(6), dp(7), dp(6));
+        live.setBackground(rounded(Color.rgb(84, 7, 18), RED, 7));
         header.addView(live);
-        root.addView(header);
-
-        LinearLayout content = new LinearLayout(this);
-        content.setPadding(dp(8), dp(8), dp(8), dp(8));
-        content.setOrientation(landscape ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        root.addView(header, h);
 
         FrameLayout cameraBox = new FrameLayout(this);
-        cameraBox.setBackgroundColor(Color.BLACK);
+        cameraBox.setBackground(rounded(Color.rgb(30, 5, 11), RED, 6));
+        cameraBox.setPadding(dp(2), dp(2), dp(2), dp(2));
         preview = new PreviewView(this);
         preview.setScaleType(PreviewView.ScaleType.FILL_CENTER);
         preview.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
         preview.getPreviewStreamState().observe(this, state -> {
             if (state == PreviewView.StreamState.STREAMING) {
                 cameraStreaming = true;
-                cameraLabel.setText("Camera: " + (frontCamera ? "Front" : "Back")
-                    + " • LIVE" + (previewOnly ? " (preview only)" : ""));
+                if (cameraLabel != null)
+                    cameraLabel.setText("Camera: " + (frontCamera ? "Front" : "Back") +
+                        " • LIVE" + (previewOnly ? " (preview only)" : ""));
             }
         });
         cameraBox.addView(preview, new FrameLayout.LayoutParams(-1, -1));
         faceOverlay = new FaceOverlay(this);
         cameraBox.addView(faceOverlay, new FrameLayout.LayoutParams(-1, -1));
-        TextView camTag = text("CAM 01  ●  LIVE", 12, RED, true);
-        camTag.setPadding(dp(10), dp(4), dp(10), dp(4));
-        camTag.setBackgroundColor(Color.argb(200, 12, 5, 9));
-        FrameLayout.LayoutParams camTagLp = new FrameLayout.LayoutParams(-2, -2,
-                                                                       Gravity.TOP | Gravity.LEFT);
-        camTagLp.setMargins(dp(8), dp(8), 0, 0);
-        cameraBox.addView(camTag, camTagLp);
+        TextView camTag = text("CAM 01  ●  LIVE", 12, TEXT, true);
+        camTag.setPadding(dp(9), dp(5), dp(9), dp(5));
+        camTag.setBackground(rounded(Color.argb(220, 18, 5, 12), RED, 5));
+        FrameLayout.LayoutParams ct = new FrameLayout.LayoutParams(-2, -2,
+            Gravity.TOP | Gravity.LEFT);
+        ct.setMargins(dp(8), dp(8), 0, 0);
+        cameraBox.addView(camTag, ct);
 
         LinearLayout side = new LinearLayout(this);
         side.setOrientation(LinearLayout.VERTICAL);
-        side.setPadding(dp(12), dp(12), dp(12), dp(12));
-        side.setBackgroundColor(PANEL);
-        alarmTitle = text("UNDER OBSERVATION", landscape ? 22 : 19, TEXT, true);
-        alarmTitle.setPadding(dp(10), dp(7), dp(10), dp(7));
-        alarmTitle.setBackgroundColor(Color.rgb(76, 22, 29));
-        side.addView(alarmTitle, new LinearLayout.LayoutParams(-1, dp(52)));
-
-        ScrollView alarmsScroll = new ScrollView(this);
-        alarmList = text("No active alarms", landscape ? 16 : 14, MUTED, false);
-        alarmList.setGravity(Gravity.TOP);
-        alarmList.setPadding(dp(8), dp(12), dp(8), dp(8));
-        alarmsScroll.addView(alarmList);
-        side.addView(alarmsScroll, new LinearLayout.LayoutParams(-1, 0, 1f));
-
-        View divider = new View(this);
-        divider.setBackgroundColor(Color.rgb(93, 38, 48));
-        side.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
-
-        mouthLabel = text("Mouth:  --", 15, TEXT, false);
-        faceLabel = text("Face:  Waiting for camera", 15, TEXT, false);
-        micLabel = text("Mic:  Off", 15, TEXT, false);
-        cameraLabel = text("Camera:  --", 14, MUTED, false);
-        for (TextView t : new TextView[]{mouthLabel, faceLabel, micLabel, cameraLabel}) {
-            t.setPadding(dp(5), dp(6), 0, dp(3));
-            side.addView(t);
-        }
+        side.setPadding(dp(9), dp(9), dp(9), dp(12));
+        side.setBackground(rounded(Color.rgb(10, 7, 11), Color.rgb(125, 53, 62), 6));
+        alarmTitle = text("UNDER OBSERVATION", landscape ? 20 : 17, TEXT, true);
+        alarmTitle.setGravity(Gravity.CENTER);
+        alarmTitle.setPadding(dp(6), dp(5), dp(6), dp(5));
+        alarmTitle.setBackground(rounded(Color.rgb(38, 11, 19), Color.rgb(127, 41, 55), 8));
+        side.addView(alarmTitle, new LinearLayout.LayoutParams(-1, dp(landscape ? 65 : 54)));
+        alarmList = text("No active alarms", landscape ? 16 : 14, MUTED, true);
+        alarmList.setGravity(Gravity.TOP | Gravity.LEFT);
+        alarmList.setPadding(dp(11), dp(13), dp(7), dp(12));
+        alarmList.setMinHeight(dp(69));
+        side.addView(alarmList, new LinearLayout.LayoutParams(-1, -2));
+        side.addView(divider(), new LinearLayout.LayoutParams(-1, dp(1)));
+        mouthLabel = stat("Mouth:  -- / 0.12", false);
+        faceLabel = stat("Face:  Waiting for camera", false);
+        micLabel = stat("Mic:  Off", false);
+        cameraLabel = stat("Camera:  --", true);
+        audioLabel = stat("Audio:  Ready", true);
+        for (TextView t : new TextView[]{mouthLabel, faceLabel, micLabel, cameraLabel, audioLabel})
+            side.addView(t, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams midline = new LinearLayout.LayoutParams(-1, dp(1));
+        midline.setMargins(0, dp(6), 0, dp(7));
+        side.addView(divider(), midline);
         waveform = new WaveformView(this);
-        side.addView(waveform, new LinearLayout.LayoutParams(-1, dp(76)));
-        Button switchCamera = new Button(this);
-        switchCamera.setText("Switch camera");
-        switchCamera.setTextColor(TEXT);
-        switchCamera.setBackgroundTintList(android.content.res.ColorStateList.valueOf(
-            Color.rgb(108, 21, 35)));
-        switchCamera.setOnClickListener(v -> {
-            frontCamera = !frontCamera;
-            startCamera();
-        });
-        side.addView(switchCamera, new LinearLayout.LayoutParams(-1, dp(47)));
+        waveform.setBackground(rounded(Color.rgb(26, 3, 10), Color.rgb(143, 24, 39), 6));
+        side.addView(waveform, new LinearLayout.LayoutParams(-1, dp(landscape ? 90 : 72)));
 
-        LinearLayout tools = new LinearLayout(this);
-        tools.setOrientation(LinearLayout.HORIZONTAL);
-        Button retry = new Button(this);
-        retry.setText("Retry camera");
-        retry.setTextColor(TEXT);
+        Button switchButton = control("Switch camera");
+        switchButton.setOnClickListener(v -> { frontCamera = !frontCamera; startCamera(); });
+        LinearLayout.LayoutParams sc = new LinearLayout.LayoutParams(-1, dp(44));
+        sc.setMargins(0, dp(8), 0, dp(4));
+        side.addView(switchButton, sc);
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+        Button retry = control("Retry camera");
         retry.setOnClickListener(v -> {
             if (!granted(Manifest.permission.CAMERA)) requestNeededPermissions();
             else startCamera();
         });
-        tools.addView(retry, new LinearLayout.LayoutParams(0, dp(49), 1f));
-        Button test = new Button(this);
-        test.setText("Test beep");
-        test.setTextColor(TEXT);
+        LinearLayout.LayoutParams rc = new LinearLayout.LayoutParams(0, dp(43), 1f);
+        rc.rightMargin = dp(4);
+        controls.addView(retry, rc);
+        Button test = control("Test beep");
         test.setOnClickListener(v -> {
-            manualBeepUntil = SystemClock.elapsedRealtime() + 1200L;
+            micActiveUntil = 0L;
+            manualBeepUntil = SystemClock.elapsedRealtime() + 1800L;
             updateAlarmOutput();
-            mainHandler.postDelayed(this::updateAlarmOutput, 1300L);
+            mainHandler.postDelayed(this::updateAlarmOutput, 1900L);
         });
-        tools.addView(test, new LinearLayout.LayoutParams(0, dp(49), 1f));
-        side.addView(tools, new LinearLayout.LayoutParams(-1, dp(49)));
+        controls.addView(test, new LinearLayout.LayoutParams(0, dp(43), 1f));
+        side.addView(controls, new LinearLayout.LayoutParams(-1, -2));
 
+        ScrollView sideScroll = new ScrollView(this);
+        sideScroll.setVerticalScrollBarEnabled(false);
+        sideScroll.addView(side, new ScrollView.LayoutParams(-1, -2));
         if (landscape) {
-            LinearLayout.LayoutParams camParams = new LinearLayout.LayoutParams(
-                0, -1, 2.2f);
-            camParams.rightMargin = dp(8);
-            content.addView(cameraBox, camParams);
-            content.addView(side, new LinearLayout.LayoutParams(0, -1, 1f));
+            LinearLayout content = new LinearLayout(this);
+            content.setOrientation(LinearLayout.HORIZONTAL);
+            content.setPadding(dp(8), dp(4), dp(8), dp(8));
+            LinearLayout.LayoutParams cam = new LinearLayout.LayoutParams(0, -1, 2.2f);
+            cam.rightMargin = dp(8);
+            content.addView(cameraBox, cam);
+            content.addView(sideScroll, new LinearLayout.LayoutParams(0, -1, 1f));
+            root.addView(content, new LinearLayout.LayoutParams(-1, 0, 1f));
         } else {
-            LinearLayout.LayoutParams camParams = new LinearLayout.LayoutParams(
-                -1, 0, 1.2f);
-            camParams.bottomMargin = dp(8);
-            content.addView(cameraBox, camParams);
-            content.addView(side, new LinearLayout.LayoutParams(-1, 0, 1f));
+            ScrollView screen = new ScrollView(this);
+            screen.setVerticalScrollBarEnabled(false);
+            LinearLayout content = new LinearLayout(this);
+            content.setOrientation(LinearLayout.VERTICAL);
+            content.setPadding(dp(7), dp(4), dp(7), dp(10));
+            float density = getResources().getDisplayMetrics().density;
+            int w = Math.round(getResources().getDisplayMetrics().widthPixels / density);
+            int hh = Math.round(getResources().getDisplayMetrics().heightPixels / density);
+            int cameraHeight = Math.max(250, Math.min(Math.round(w * 1.16f),
+                                                     Math.round(hh * 0.51f)));
+            content.addView(cameraBox, new LinearLayout.LayoutParams(-1, dp(cameraHeight)));
+            LinearLayout.LayoutParams sideParams = new LinearLayout.LayoutParams(-1, -2);
+            sideParams.topMargin = dp(8);
+            content.addView(sideScroll, sideParams);
+            screen.addView(content, new ScrollView.LayoutParams(-1, -2));
+            root.addView(screen, new LinearLayout.LayoutParams(-1, 0, 1f));
         }
-        root.addView(content, new LinearLayout.LayoutParams(-1, 0, 1f));
         setContentView(root);
+        ViewCompat.requestApplyInsets(root);
     }
 
     private boolean granted(String permission) {
@@ -262,11 +328,15 @@ public final class MainActivity extends ComponentActivity {
             microphone = new AudioMonitor(level -> runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
                 waveform.addLevel(level);
-                if (!tone.isPlaying() && level > 0.04f) {
-                    micActiveUntil = SystemClock.elapsedRealtime() + 550L;
+                if (!tone.isPlaying()) {
+                    float threshold = Math.max(0.009f, micNoiseFloor * 2.7f);
+                    if (level > threshold) micActiveUntil = SystemClock.elapsedRealtime() + 700L;
+                    micNoiseFloor = micNoiseFloor * 0.985f
+                        + Math.min(level, micNoiseFloor * 1.8f) * 0.015f;
                 }
-                micLabel.setText("Mic:  " +
-                    (SystemClock.elapsedRealtime() < micActiveUntil ? "Sound detected" : "Listening"));
+                micLabel.setText("Mic: " +
+                    (SystemClock.elapsedRealtime() < micActiveUntil ? "Sound detected" : "Listening")
+                    + String.format(java.util.Locale.US, " • %.3f", level));
                 // Mic alarms must work even when camera/ML Kit cannot deliver frames.
                 updateAlarmOutput();
             }));
@@ -441,7 +511,7 @@ public final class MainActivity extends ComponentActivity {
 
         float ratio = primary == null ? -1f : mouthRatio(primary);
         if (ratio < 0) mouthOpen = false;
-        else mouthOpen = ratio > (mouthOpen ? 0.10f : 0.15f);
+        else mouthOpen = ratio > (mouthOpen ? 0.075f : 0.12f);
         if (mouthOpen) alarms.add("MOUTH OPEN");
         if (delayed("HEAD TURNED AWAY",
                     primary != null && Math.abs(primary.getHeadEulerAngleY()) > 25f,
@@ -467,7 +537,7 @@ public final class MainActivity extends ComponentActivity {
         updateAlarmOutput();
         mouthLabel.setText("Mouth:  " + (ratio < 0 ? "--" :
                             String.format(java.util.Locale.US, "%.2f", ratio)) +
-                            "  /  0.15");
+                            "  /  0.12");
         faceLabel.setText("Face:  " + (primary == null ? "Not visible" :
                           faces.size() == 1 ? "Tracking" : faces.size()+" detected"));
         if (cameraStreaming) cameraLabel.setText("Camera: " +
@@ -485,8 +555,13 @@ public final class MainActivity extends ComponentActivity {
 
         boolean active = !alarms.isEmpty();
         alarmTitle.setText(active ? "⚠ ALARM ACTIVE" : "UNDER OBSERVATION");
-        alarmTitle.setBackgroundColor(active ? RED : Color.rgb(76, 22, 29));
-        alarmTitle.setTextColor(active ? Color.BLACK : TEXT);
+        if (active != lastAlarmActive) {
+            alarmTitle.setBackground(rounded(
+                active ? Color.rgb(97, 10, 22) : Color.rgb(38, 11, 19),
+                active ? RED : Color.rgb(127, 41, 55), 8));
+            lastAlarmActive = active;
+        }
+        alarmTitle.setTextColor(TEXT);
         if (!active) {
             alarmList.setText("No active alarms");
             alarmList.setTextColor(MUTED);
@@ -496,8 +571,19 @@ public final class MainActivity extends ComponentActivity {
             alarmList.setText(list.toString().trim());
             alarmList.setTextColor(RED);
         }
-        if (!tone.setPlaying(active)) {
-            micLabel.setText("Alarm audio unavailable • check alarm volume");
+        boolean started = tone.setPlaying(active);
+        AudioManager audio = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        int volume = audio == null ? -1 : audio.getStreamVolume(AudioManager.STREAM_MUSIC);
+        if (volume == 0) {
+            audioLabel.setText("Audio: MEDIA VOLUME 0 — raise volume");
+            audioLabel.setTextColor(RED);
+        } else if (!started) {
+            audioLabel.setText("Audio error: " + tone.getLastError());
+            audioLabel.setTextColor(RED);
+        } else {
+            audioLabel.setText(active ? "Audio: BEEP PLAYING • media " + volume
+                                      : "Audio: Ready • media " + volume);
+            audioLabel.setTextColor(MUTED);
         }
     }
 
