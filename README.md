@@ -8,9 +8,7 @@ A Windows app that gets annoyed when you open your mouth.
 
 I saw [Raul Engineer's video](https://www.youtube.com/shorts/dYAdNCzWI3o) and wanted to make something similar. It watches your webcam and microphone, and sets off an obnoxious 1 kHz test tone whenever you break one of its completely reasonable rules.
 
-Open your mouth? Alarm. Cover your mouth? Also an alarm. Leave the camera? You get the idea.
-
-It's a joke project. Please don't rely on it for actual monitoring or security.
+Open your mouth? Alarm. Cover your mouth? the state hears 
 
 **[Download the latest version](https://github.com/billyke2000s/censorship-directorate-/releases/latest)**
 
@@ -19,10 +17,6 @@ It's a joke project. Please don't rely on it for actual monitoring or security.
 <p align="center">
   <img src="docs/images/console-demo.svg" alt="Censorship Directorate app with the mouth-open alarm active" width="100%">
 </p>
-
-*The screenshot uses an example image. When you run it, the big area on the left is your live webcam.*
-
-There's a live preview with face-tracking corners and an outline around your lips. The panel on the right shows what's triggered, along with the camera information and microphone activity.
 
 ## Getting it running
 
@@ -51,11 +45,11 @@ The first launch installs the Python packages and downloads the face/hand tracki
 
 The mouth-open alarm triggers at a mouth aspect ratio of **0.30** and clears below **0.22**. Covering your mouth takes about **0.24 seconds** to trigger.
 
-It's not perfect. Bad lighting, background noise and sitting unusually still can all cause false alarms. The app is checking for patterns, not reading your mind.
+It's not perfect. Bad lighting, background noise and sitting unusually still can set it off although it's quite good 
 
 ## Using it as a microphone in calls
 
-There's an optional mode that replaces your voice with the alarm tone in a call. Because apparently the noise coming from your own speakers wasn't enough.
+There's an optional mode that replaces your voice with the alarm tone in a call this was ais idea not mine haha 
 
 1. Install [VB-CABLE](https://vb-audio.com/Cable/) and restart Windows if it asks.
 2. Run `Start-Virtual-Mic.cmd` instead of the normal launcher.
