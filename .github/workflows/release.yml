@@ -1,0 +1,61 @@
+name: Publish source release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release.yml
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.1)'
+        required: true
+        default: 'v0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Validate Python syntax
+        run: python3 -m compileall -q .
+
+      - name: Package the Windows source distribution
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          root = Path('.')
+          archive = Path('Censorship-Directorate-Windows-Source.zip')
+          allow = {'.py', '.cmd', '.ps1', '.txt', '.md', '.jpg', '.png', '.svg'}
+          with ZipFile(archive, 'w', ZIP_DEFLATED) as z:
+              for p in sorted(root.rglob('*')):
+                  if not p.is_file() or p == archive:
+                      continue
+                  if any(x in {'.git', '.github', '.venv', '__pycache__', '.pytest_cache'} for x in p.parts):
+                      continue
+                  if p.suffix.lower() in allow:
+                      z.write(p, arcname=p.as_posix())
+          print(f'{archive}: {archive.stat().st_size} bytes')
+          PY
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="${INPUT_TAG:-v0.1.0}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" Censorship-Directorate-Windows-Source.zip --clobber
+          else
+            gh release create "$TAG" Censorship-Directorate-Windows-Source.zip \
+              --target "$GITHUB_SHA" \
+              --title "Censorship Directorate $TAG" \
+              --notes "Windows source distribution. Extract the ZIP and run Start-MouthAlarm.cmd. Requires Python 3.14; dependencies and camera models are fetched on first launch. This is not a standalone EXE."
+          fi
