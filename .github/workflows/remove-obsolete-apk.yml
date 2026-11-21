@@ -1,0 +1,19 @@
+name: Remove obsolete Android APK asset
+
+on:
+  push:
+    paths:
+      - '.github/workflows/remove-obsolete-apk.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  remove-apk:
+    runs-on: ubuntu-latest
+    if: github.repository == 'billyke2000s/censorship-directorate-'
+    steps:
+      - name: Delete obsolete APK from v0.1.2 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete-asset v0.1.2 Censorship-Directorate-Android-Preview.apk --yes --repo "$GITHUB_REPOSITORY"
