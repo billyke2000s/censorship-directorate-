@@ -32,14 +32,6 @@ The first launch installs the Python packages and downloads the face/hand tracki
 
 **It's a source ZIP, not an EXE.** Python needs to be installed first.
 
-## Android preview
-
-There's now an [**Android APK**](https://github.com/billyke2000s/censorship-directorate-/releases/download/v0.1.2/Censorship-Directorate-Android-Preview.apk) as well (Android 7.0+).
-
-This is a **first native Android build**, not the Windows Python app stuffed inside an APK. It uses your phone camera, tracks faces and mouth opening, shows the red alarm UI and can play the warning tone. There is also a mic sound-activity display.
-
-It's still missing **hand-over-mouth detection** and **virtual-mic call routing**. Android's mic warning currently reacts to sound, not the same speech detector as Windows. It was compiled by GitHub Actions but hasn't been tested on a phone yet. It is debug-signed, so future previews may need a reinstall.
-
 ## What makes it go off?
 
 | Alarm | What it detects |
